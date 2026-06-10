@@ -15,7 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -51,12 +51,15 @@ jobs:
         run: |
           ls -lh drugs_data.json
           python -c "
-          import json
+          import json, sys
           d = json.load(open('drugs_data.json', encoding='utf-8'))
           m = d['_meta']
           print(f'總筆數: {m[\"totalRecords\"]:,}')
           print(f'健保品項: {m[\"nhiRecords\"]:,}')
           print(f'章節對照: {m[\"chaptersTotal\"]:,}')
+          if m['nhiRecords'] < 1000:
+              print(f'::error::健保品項數量異常（{m[\"nhiRecords\"]}），不應 commit！請檢查 NHI API', file=sys.stderr)
+              sys.exit(1)
           "
 
       - name: Commit and push if changed

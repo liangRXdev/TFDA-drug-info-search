@@ -57,19 +57,34 @@ INGREDIENT_NOISE = {
 # ────────────────────────────────────────────────────────────────
 
 
-def download(url, label, verify=True):
+def download(url, label, verify=True, max_retries=3):
     print(f"  ⬇  下載中：{label}")
     if not verify:
         print("     ℹ  停用 SSL 驗證")
-    start = time.time()
-    resp = requests.get(url, timeout=TIMEOUT_SEC, verify=verify, headers={
+    headers = {
         "User-Agent": "Mozilla/5.0 TFDA-DrugSearch/1.0",
         "Accept": "*/*",
-    })
-    resp.raise_for_status()
-    data = resp.content
-    print(f"     ✓  下載完成（{len(data)/1e6:.2f} MB，{time.time()-start:.1f} 秒）")
-    return data
+    }
+    for attempt in range(1, max_retries + 1):
+        try:
+            start = time.time()
+            resp = requests.get(url, timeout=TIMEOUT_SEC, verify=verify,
+                                headers=headers, stream=True)
+            resp.raise_for_status()
+            chunks = []
+            downloaded = 0
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1 MB chunks
+                chunks.append(chunk)
+                downloaded += len(chunk)
+            data = b''.join(chunks)
+            print(f"     ✓  下載完成（{len(data)/1e6:.2f} MB，{time.time()-start:.1f} 秒）")
+            return data
+        except Exception as e:
+            if attempt < max_retries:
+                print(f"     ⚠  第 {attempt} 次失敗，5 秒後重試：{e}")
+                time.sleep(5)
+            else:
+                raise
 
 
 def smart_decode(raw):
@@ -286,6 +301,8 @@ def main():
     print(f"  健保章節對照：{len(nhi_chapters):,}")
     if not raw37:
         sys.exit("\n⚠  API 37 無資料")
+    if not raw_nhi:
+        sys.exit("\n⚠  NHI 健保 CSV 無資料（API 可能失效或格式已變更），中止以防止覆蓋正常資料")
 
     # ── 欄位映射 ────────────────────────────────────────────────
     print("\n  === 自動欄位映射 ===")
@@ -301,19 +318,24 @@ def main():
     K42_lic   = detect_field(raw42, "許可證字號")
     K42_image = detect_field(raw42, "外觀圖檔連結", "圖檔連結")
 
-    KN_drugcode  = detect_field(raw_nhi, "藥品代號")
-    KN_chapter   = detect_field(raw_nhi, "給付規定章節")
-    KN_link      = detect_field(raw_nhi, "給付規定章節連結")
-    KN_drugurl   = detect_field(raw_nhi, "藥品代碼超連結")
-    KN_chname    = detect_field(raw_nhi, "藥品中文名稱")
-    KN_enname    = detect_field(raw_nhi, "藥品英文名稱")
-    KN_ingredient= detect_field(raw_nhi, "成分")
-    KN_validto   = detect_field(raw_nhi, "有效迄日")
+    KN_drugcode  = detect_field(raw_nhi, "藥品代號", "藥品代碼", "健保藥品代號", "健保代號")
+    KN_chapter   = detect_field(raw_nhi, "給付規定章節", "特殊給付規定章節")
+    KN_link      = detect_field(raw_nhi, "給付規定章節連結", "章節連結")
+    KN_drugurl   = detect_field(raw_nhi, "藥品代碼超連結", "代碼超連結")
+    KN_chname    = detect_field(raw_nhi, "藥品中文名稱", "中文品名", "中文名稱")
+    KN_enname    = detect_field(raw_nhi, "藥品英文名稱", "英文品名", "英文名稱")
+    KN_ingredient= detect_field(raw_nhi, "成分", "主成分", "藥品成分")
+    KN_validto   = detect_field(raw_nhi, "有效迄日", "有效日期", "迄日")
     print(f"  API 37: 適應症={K37_indication} 成分={K37_ingredient} 用法={K37_usage} 類別={K37_lictype}")
     print(f"  API 39: lic={K39_lic} 仿單={K39_package} 外盒={K39_outer}")
     print(f"  API 42: lic={K42_lic} 圖檔={K42_image}")
     print(f"  NHI: 代號={KN_drugcode} 章節={KN_chapter} 章節連結={KN_link}")
     print(f"       超連結={KN_drugurl} 成分={KN_ingredient} 有效迄日={KN_validto}")
+
+    if not KN_drugcode:
+        all_cols = list(raw_nhi[0].keys()) if raw_nhi else []
+        print(f"  ⚠  NHI CSV 所有欄位：{all_cols}", file=sys.stderr)
+        sys.exit("⚠  找不到 NHI 藥品代號欄位，CSV 格式可能已變更，中止以防止覆蓋正常資料")
 
     # ── Step 2：建立索引 ────────────────────────────────────────
     print("\n【Step 2】建立索引字典...")
@@ -384,6 +406,9 @@ def main():
     print(f"  仿單索引：{len(pkg_dict):,}")
     print(f"  圖檔索引：{len(img_dict):,}")
     print(f"  健保索引鍵值：{len(nhi_index):,}（含章節 {nhi_with_chapter:,} | 含章節連結 {nhi_with_link:,}）")
+
+    if len(nhi_index) < 1000:
+        sys.exit(f"⚠  健保索引鍵值僅 {len(nhi_index):,}（預期 >1000），NHI 資料異常，中止以防止覆蓋正常資料")
 
     # ── Step 3：合併 ────────────────────────────────────────────
     print("\n【Step 3】合併資料...")
