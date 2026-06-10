@@ -740,16 +740,13 @@ function buildCard(drug, keyword = '') {
             📄 電子仿單（新版）
         </a>` : '';
 
-    // 舊版仿單連結（API 39 的圖檔，部分 404）
-    const oldPkgBtns = (drug.packageLinks || []).map((url, i) => `
-        <a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="link-btn link-btn-outline">
-            📃 舊版仿單${drug.packageLinks.length > 1 ? ' '+(i+1) : ''}
-        </a>`).join('');
+    // 舊版仿單連結（API 39 的圖檔：index 0=仿單, index 1=外盒/標籤，部分 404）
+    const oldPkgBtns = (drug.packageLinks || []).map((url, i) => {
+        const label = i === 1 ? '外盒/標籤' : '舊版仿單';
+        return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="link-btn link-btn-outline">📃 ${label}</a>`;
+    }).join('');
 
     const pkgBtns = fdaPkgBtn + oldPkgBtns;
-
-    // 備援搜尋
-    const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(drug.licenseNumber + ' 仿單')}`;
 
     // 外觀按鈕
     const imgBtns = (drug.imageLinks || []).map((url, i) => `
@@ -844,9 +841,6 @@ function buildCard(drug, keyword = '') {
             ${pkgBtns}
             ${imgBtns}
             ${nhiBtn}
-            <a href="${escapeAttr(googleSearchUrl)}" target="_blank" rel="noopener" class="link-btn link-btn-gray">
-                🌐 Google 仿單
-            </a>
             <div class="link-helper-tip">💡 建議優先使用「電子仿單（新版）」；健保查詢請先複製代號再貼到查詢頁</div>
         </div>
     </div>
