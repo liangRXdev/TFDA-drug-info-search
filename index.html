@@ -327,6 +327,13 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 }
 .nhi-codes-table tbody tr:last-child td { border-bottom:none; }
 .nhi-codes-table tbody tr:hover { background:rgba(245,158,11,.06); }
+.price-cell { font-weight:600; white-space:nowrap; }
+.atc-badge {
+    display:inline-block; background:rgba(37,99,235,.08);
+    color:var(--dark-blue); border:1px solid var(--light-blue);
+    border-radius:4px; padding:0 .4rem; font-size:.78rem;
+    font-family:monospace; letter-spacing:.03em; white-space:nowrap;
+}
 .copy-mini {
     background:none; border:1px solid rgba(245,158,11,.3);
     border-radius:4px; padding:1px 4px; margin-left:4px;
@@ -692,6 +699,8 @@ function buildNhiCodesTable(matches, isGreen = false) {
     if (!matches || !matches.length) return '';
     const borderColor = isGreen ? 'var(--green-border)' : 'var(--amber-border)';
     const textColor   = isGreen ? 'var(--green-text)' : 'var(--amber-text)';
+    const hasPrice = matches.some(m => m.price);
+    const hasAtc   = matches.some(m => m.atcCode);
     const rows = matches.map(m => `
         <tr>
             <td style="font-weight:600;font-family:monospace;white-space:nowrap;">
@@ -699,13 +708,18 @@ function buildNhiCodesTable(matches, isGreen = false) {
                 <button type="button" class="copy-mini" onclick="copyNhiCode('${escapeAttr(m.code)}', this)" title="複製代號">📋</button>
             </td>
             <td style="font-size:.8rem;">${escapeHtml(m.enName || m.chName || '')}</td>
+            ${hasPrice ? `<td class="price-cell" style="color:${textColor};">${m.price ? escapeHtml(m.price) + ' 元' : '—'}</td>` : ''}
+            ${hasAtc   ? `<td>${m.atcCode ? `<span class="atc-badge">${escapeHtml(m.atcCode)}</span>` : '—'}</td>` : ''}
             <td style="font-size:.78rem;color:${textColor};">${m.chapter ? escapeHtml(m.chapter) : '—'}</td>
         </tr>
     `).join('');
     return `
         <table class="nhi-codes-table" style="border-color:${borderColor};">
             <thead><tr>
-                <th>健保代號</th><th>品名</th><th>章節</th>
+                <th>健保代號</th><th>品名</th>
+                ${hasPrice ? '<th>支付價</th>' : ''}
+                ${hasAtc   ? '<th>ATC</th>' : ''}
+                <th>章節</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>`;
@@ -768,6 +782,10 @@ function buildCard(drug, keyword = '') {
             🔗 開啟健保查詢頁
         </a>` : '';
 
+    const atcBadge = drug.nhiAtcCode
+        ? `<span class="atc-badge" style="margin-left:.5rem;">${escapeHtml(drug.nhiAtcCode)}</span>`
+        : '';
+
     if (drug.nhiChapter || drug.nhiChapterLink || (drug.chapterDetails && drug.chapterDetails.length)) {
         // 有特殊給付規定
         const detailsHtml = (drug.chapterDetails || []).map(d => `
@@ -791,7 +809,7 @@ function buildCard(drug, keyword = '') {
 
         nhiSection = `
             <div class="nhi-section">
-                <div class="info-label">💰 健保給付規定</div>
+                <div class="info-label">💰 健保給付規定${atcBadge}</div>
                 ${chapterLine}
                 ${detailsHtml}
                 ${buildNhiCodesTable(matches)}
@@ -800,7 +818,7 @@ function buildCard(drug, keyword = '') {
         // 健保品項但無特殊規定
         nhiSection = `
             <div class="nhi-section" style="background:var(--green-bg);border-color:var(--green-border);">
-                <div class="info-label" style="color:var(--green-text);">💚 健保品項（無特殊給付限制）</div>
+                <div class="info-label" style="color:var(--green-text);">💚 健保品項（無特殊給付限制）${atcBadge}</div>
                 <div class="info-content" style="color:var(--green-text);">本藥品為健保給付品項，依一般慢性病用藥規範給付。</div>
                 ${buildNhiCodesTable(matches, true)}
             </div>`;

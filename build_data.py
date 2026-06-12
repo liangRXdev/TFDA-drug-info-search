@@ -326,11 +326,14 @@ def main():
     KN_enname    = detect_field(raw_nhi, "藥品英文名稱", "英文品名", "英文名稱")
     KN_ingredient= detect_field(raw_nhi, "成分", "主成分", "藥品成分")
     KN_validto   = detect_field(raw_nhi, "有效迄日", "有效日期", "迄日")
+    KN_atccode   = detect_field(raw_nhi, "ATC代碼", "ATC")
+    KN_price     = detect_field(raw_nhi, "支付價", "健保價")
     print(f"  API 37: 適應症={K37_indication} 成分={K37_ingredient} 用法={K37_usage} 類別={K37_lictype}")
     print(f"  API 39: lic={K39_lic} 仿單={K39_package} 外盒={K39_outer}")
     print(f"  API 42: lic={K42_lic} 圖檔={K42_image}")
     print(f"  NHI: 代號={KN_drugcode} 章節={KN_chapter} 章節連結={KN_link}")
     print(f"       超連結={KN_drugurl} 成分={KN_ingredient} 有效迄日={KN_validto}")
+    print(f"       ATC代碼={KN_atccode} 支付價={KN_price}")
 
     if not KN_drugcode:
         all_cols = list(raw_nhi[0].keys()) if raw_nhi else []
@@ -385,6 +388,8 @@ def main():
         enname  = (row.get(KN_enname)     or "").strip() if KN_enname     else ""
         chname  = (row.get(KN_chname)     or "").strip() if KN_chname     else ""
         ingr    = (row.get(KN_ingredient) or "").strip() if KN_ingredient else ""
+        atccode = (row.get(KN_atccode)    or "").strip() if KN_atccode    else ""
+        price   = (row.get(KN_price)      or "").strip() if KN_price      else ""
 
         payload = {
             "nhiChapter":      chapter,
@@ -395,6 +400,8 @@ def main():
             "nhiChName":       chname,
             "nhiIngredient":   ingr,
             "isExpired":       is_expired,
+            "nhiAtcCode":      atccode,
+            "nhiPrice":        price,
         }
         if chapter:
             nhi_with_chapter += 1
@@ -448,6 +455,8 @@ def main():
                         "chapter": c.get("nhiChapter", ""),
                         "chapterLink": c.get("nhiChapterLink", ""),
                         "drugUrl": c.get("nhiDrugUrl", ""),
+                        "atcCode": c.get("nhiAtcCode", ""),
+                        "price":   c.get("nhiPrice", ""),
                     })
                     # 主要紀錄：優先取有給付規定的
                     if not nhi_primary or (c.get("nhiChapter") and not nhi_primary.get("nhiChapter")):
@@ -479,7 +488,8 @@ def main():
             "imageLinks":       img_dict.get(lic, []),
             "nhiChapter":       nhi_primary.get("nhiChapter", ""),
             "nhiChapterLink":   nhi_primary.get("nhiChapterLink", ""),
-            "nhiMatches":       nhi_matches,     # 所有匹配的 NHI 品項（含代號、品名、規格）
+            "nhiAtcCode":       nhi_primary.get("nhiAtcCode", ""),
+            "nhiMatches":       nhi_matches,     # 所有匹配的 NHI 品項（含代號、品名、規格、支付價、ATC）
             "chapterDetails":   chapter_details,
             "isRawMaterial":    is_raw,
             "isNhi":            is_nhi,
