@@ -21,7 +21,7 @@
 """
 
 import json, sys, os, re, time, io, csv, zipfile, subprocess, tempfile
-from datetime import datetime
+from datetime import datetime, date
 
 try:
     import requests, urllib3
@@ -284,6 +284,32 @@ def detect_field(rows, *patterns):
     return None
 
 
+def parse_roc_date(s):
+    """民國日期 YYMMDD(6碼)/YYYMMDD(7碼) 連寫格式 → date；失敗回 None。
+    例：860901→1997-09-01、1040201→2015-02-01、9991231→永久(哨兵)"""
+    s = (s or "").strip()
+    if not s.isdigit():
+        return None
+    if len(s) == 7:
+        y, m, d = int(s[:3]), int(s[3:5]), int(s[5:7])
+    elif len(s) == 6:
+        y, m, d = int(s[:2]), int(s[2:4]), int(s[4:6])
+    else:
+        return None
+    try:
+        return date(y + 1911, m, d)
+    except ValueError:
+        return None
+
+
+def price_value(s):
+    """支付價字串 → float；無法解析回 0.0"""
+    try:
+        return float((s or "0").strip() or 0)
+    except ValueError:
+        return 0.0
+
+
 # ── 主流程 ──────────────────────────────────────────────────────
 def main():
     print("=" * 60)
@@ -326,6 +352,7 @@ def main():
     KN_enname    = detect_field(raw_nhi, "藥品英文名稱", "英文品名", "英文名稱")
     KN_ingredient= detect_field(raw_nhi, "成分", "主成分", "藥品成分")
     KN_validto   = detect_field(raw_nhi, "有效迄日", "有效日期", "迄日")
+    KN_validfrom = detect_field(raw_nhi, "有效起日", "生效日期", "起日")
     KN_atccode   = detect_field(raw_nhi, "ATC代碼", "ATC")
     KN_price     = detect_field(raw_nhi, "支付價", "健保價")
     print(f"  API 37: 適應症={K37_indication} 成分={K37_ingredient} 用法={K37_usage} 類別={K37_lictype}")
@@ -333,7 +360,7 @@ def main():
     print(f"  API 42: lic={K42_lic} 圖檔={K42_image}")
     print(f"  NHI: 代號={KN_drugcode} 章節={KN_chapter} 章節連結={KN_link}")
     print(f"       超連結={KN_drugurl} 成分={KN_ingredient} 有效迄日={KN_validto}")
-    print(f"       ATC代碼={KN_atccode} 支付價={KN_price}")
+    print(f"       有效起日={KN_validfrom} ATC代碼={KN_atccode} 支付價={KN_price}")
 
     if not KN_drugcode:
         all_cols = list(raw_nhi[0].keys()) if raw_nhi else []
@@ -363,24 +390,51 @@ def main():
             if lic and img:
                 img_dict.setdefault(lic, []).append(img)
 
-    today = datetime.now().strftime('%Y-%m-%d')
+    # ── 收斂 NHI 多筆歷史：每個藥品代號只保留「現行有效」那筆 ──
+    # NHI CSV 對每次支付價調整都留一筆歷史記錄（各有有效起日/迄日），
+    # 須挑出涵蓋今日的現行記錄，並排除現行支付價為 0（已停止單獨計價／被新代碼取代）。
+    today_date = date.today()
+
+    def nhi_is_current(row):
+        e = parse_roc_date(row.get(KN_validto))   if KN_validto   else None
+        s = parse_roc_date(row.get(KN_validfrom)) if KN_validfrom else None
+        if e and e < today_date:   # 已逾有效迄日
+            return False
+        if s and s > today_date:   # 尚未生效
+            return False
+        return True
+
+    by_code = {}
+    for row in raw_nhi:
+        code = (row.get(KN_drugcode) or "").strip()
+        if code:
+            by_code.setdefault(code, []).append(row)
+
+    collapsed = []
+    drop_expired = drop_zero = 0
+    for code, recs in by_code.items():
+        current = [r for r in recs if nhi_is_current(r)]
+        if not current:
+            drop_expired += 1
+            continue
+        # 多筆現行記錄取有效起日最新者
+        current.sort(key=lambda r: parse_roc_date(r.get(KN_validfrom)) or date.min,
+                     reverse=True)
+        chosen = current[0]
+        if price_value(chosen.get(KN_price)) <= 0:   # 現行支付價 0 = 已停用／被取代
+            drop_zero += 1
+            continue
+        collapsed.append(chosen)
+    print(f"  NHI 收斂：原始 {len(raw_nhi):,} 筆 → 代號 {len(by_code):,} 種 → "
+          f"現行有效 {len(collapsed):,}（剔除已過期 {drop_expired:,}、現行價0 {drop_zero:,}）")
+
     nhi_index = {}
     nhi_with_chapter = nhi_with_link = 0
-    for row in raw_nhi:
+    for row in collapsed:
         code = (row.get(KN_drugcode) or "").strip()
         keys = nhi_code_to_keys(code)
         if not keys:
             continue
-
-        validto = (row.get(KN_validto) or "").strip() if KN_validto else ""
-        is_expired = False
-        if validto:
-            v = validto.replace('/', '-')
-            m = re.match(r'^(\d{2,3})-(\d{1,2})-(\d{1,2})$', v)
-            if m and int(m.group(1)) < 200:
-                v = f"{int(m.group(1))+1911}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
-            if re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-                is_expired = (v < today)
 
         chapter = (row.get(KN_chapter)    or "").strip() if KN_chapter    else ""
         link    = (row.get(KN_link)       or "").strip() if KN_link       else ""
@@ -399,7 +453,6 @@ def main():
             "nhiEnName":       enname,
             "nhiChName":       chname,
             "nhiIngredient":   ingr,
-            "isExpired":       is_expired,
             "nhiAtcCode":      atccode,
             "nhiPrice":        price,
         }
@@ -442,8 +495,6 @@ def main():
                 for c in nhi_index.get(k, []):
                     code = c.get("nhiDrugCode", "")
                     if not code or code in seen_codes:
-                        continue
-                    if c.get("isExpired"):
                         continue
                     if not ingredients_match(fda_ingr, c.get("nhiIngredient", "")):
                         continue
