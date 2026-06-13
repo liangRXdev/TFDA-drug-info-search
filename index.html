@@ -310,9 +310,15 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 @keyframes spin   { to{transform:rotate(360deg)} }
 
 /* NHI 代號表格 */
+.nhi-table-wrap {
+    margin-top:.75rem;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    border-radius:8px;
+}
 .nhi-codes-table {
     width:100%; border-collapse:collapse;
-    margin-top:.75rem; font-size:.85rem;
+    font-size:.85rem;
     border:1px solid var(--amber-border);
     border-radius:8px; overflow:hidden;
 }
@@ -714,6 +720,7 @@ function buildNhiCodesTable(matches, isGreen = false) {
         </tr>
     `).join('');
     return `
+        <div class="nhi-table-wrap">
         <table class="nhi-codes-table" style="border-color:${borderColor};">
             <thead><tr>
                 <th>健保代號</th><th>品名</th>
@@ -722,7 +729,8 @@ function buildNhiCodesTable(matches, isGreen = false) {
                 <th>章節</th>
             </tr></thead>
             <tbody>${rows}</tbody>
-        </table>`;
+        </table>
+        </div>`;
 }
 
 function highlight(text, keyword) {
