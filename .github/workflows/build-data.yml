@@ -3,7 +3,7 @@ name: Build Drug Database
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 1 * *'       # 每月 1 號 UTC 18:00 = 台灣 02:00
+    - cron: '0 18 * * 0'       # 每週日 UTC 18:00 = 台灣週一 02:00
   push:
     paths:
       - 'build_data.py'
@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
