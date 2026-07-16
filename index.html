@@ -401,6 +401,10 @@ footer a { color:var(--primary-blue); text-decoration:none; }
     background:var(--lighter-blue); border-bottom:1px solid var(--light-blue);
     color:var(--primary-blue);
 }
+#updateBanner {
+    background:var(--green-bg); border-bottom:1px solid var(--green-border);
+    color:var(--green-text);
+}
 .pwa-action-btn {
     padding:.35rem .875rem; border:none; border-radius:8px;
     font-size:.825rem; font-weight:600; cursor:pointer; font-family:inherit;
@@ -418,6 +422,13 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 <!-- PWA：離線模式提示 -->
 <div id="offlineBanner" class="pwa-banner" role="status">
     ⚠️ 離線模式 · 使用快取資料（可能非最新版本）
+</div>
+
+<!-- PWA：資料已更新提示（背景 revalidate 取得新版時顯示） -->
+<div id="updateBanner" class="pwa-banner" role="status">
+    <span>🔄 藥品資料已有新版本</span>
+    <button class="pwa-action-btn pwa-install-btn" id="reloadBtn">重新整理套用</button>
+    <button class="pwa-action-btn pwa-dismiss-btn" id="dismissUpdateBtn" aria-label="關閉">✕</button>
 </div>
 
 <!-- PWA：安裝提示 -->
@@ -932,10 +943,21 @@ if ('serviceWorker' in navigator) {
         if (e.data?.type === 'OFFLINE_MODE') {
             document.getElementById('offlineBanner').style.display = 'flex';
         }
+        // 本次載入用的是快取資料，背景已取得新版；不自動重載以免中斷查詢中的操作
+        if (e.data?.type === 'DATA_UPDATED') {
+            document.getElementById('updateBanner').style.display = 'flex';
+        }
     });
 }
 
 // ── PWA：離線 / 上線狀態偵測 ──────────────────────────────────
+// ── PWA：資料更新提示 ─────────────────────────────────────────
+const updateBanner = document.getElementById('updateBanner');
+document.getElementById('reloadBtn').addEventListener('click', () => location.reload());
+document.getElementById('dismissUpdateBtn').addEventListener('click', () => {
+    updateBanner.style.display = 'none';
+});
+
 const offlineBanner = document.getElementById('offlineBanner');
 window.addEventListener('offline', () => { offlineBanner.style.display = 'flex'; });
 window.addEventListener('online',  () => { offlineBanner.style.display = 'none'; });
