@@ -70,8 +70,9 @@ h1 { font-size:1.75rem; font-weight:700; color:var(--primary-blue); letter-spaci
     margin-bottom:1.5rem; border:1px solid var(--border-color);
 }
 .search-box { display:flex; gap:.75rem; margin-bottom:.875rem; }
+.search-input-wrap { flex:1; position:relative; }
 #searchInput {
-    flex:1; padding:.875rem 1.25rem; font-size:1rem;
+    width:100%; padding:.875rem 1.25rem; font-size:1rem;
     border:2px solid var(--border-color); border-radius:12px;
     font-family:inherit; transition:all .3s ease;
 }
@@ -109,6 +110,32 @@ h1 { font-size:1.75rem; font-weight:700; color:var(--primary-blue); letter-spaci
     background:var(--primary-blue); color:white; border-color:var(--primary-blue);
 }
 .search-hint { font-size:.825rem; color:var(--text-secondary); margin-top:.5rem; }
+
+/* Autosuggest */
+.suggest-box {
+    display:none; position:absolute; z-index:50;
+    top:calc(100% + .375rem); left:0; right:0;
+    background:var(--bg-white); border:1px solid var(--border-color);
+    border-radius:12px; box-shadow:var(--shadow-lg);
+    max-height:22rem; overflow-y:auto; padding:.375rem;
+}
+.suggest-box.active { display:block; }
+.suggest-group {
+    font-size:.72rem; font-weight:700; letter-spacing:.05em;
+    color:var(--text-secondary); text-transform:uppercase;
+    padding:.5rem .75rem .25rem;
+}
+.suggest-item {
+    display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+    padding:.5rem .75rem; border-radius:8px; cursor:pointer;
+    font-size:.9rem; line-height:1.4;
+}
+.suggest-item:hover, .suggest-item.active { background:var(--lighter-blue); }
+.suggest-item .s-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.suggest-item .s-count {
+    flex-shrink:0; font-size:.72rem; color:var(--text-secondary);
+    background:var(--gray-bg); border-radius:10px; padding:.1rem .5rem;
+}
 
 /* Init Banner */
 .init-banner {
@@ -452,10 +479,21 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 
     <div class="search-section">
         <div class="search-box">
-            <input type="text" id="searchInput"
-                   placeholder="請輸入藥品中文品名或英文品名（例如：Norvasc、脈優、阿莫西林）"
-                   autocomplete="off" disabled>
+            <div class="search-input-wrap">
+                <input type="text" id="searchInput"
+                       placeholder="請輸入藥品中文品名或英文品名（例如：Norvasc、脈優）"
+                       autocomplete="off" role="combobox" aria-expanded="false"
+                       aria-autocomplete="list" aria-controls="suggestBox" disabled>
+                <div class="suggest-box" id="suggestBox" role="listbox"></div>
+            </div>
             <button id="searchBtn" disabled>🔍 搜尋</button>
+        </div>
+
+        <div class="filter-row">
+            <span class="filter-label">🔎 搜尋範圍：</span>
+            <button class="scope-btn filter-btn active" data-scope="name">品名</button>
+            <button class="scope-btn filter-btn" data-scope="ingredient">成分</button>
+            <button class="scope-btn filter-btn" data-scope="both">全部</button>
         </div>
 
         <div class="filter-row">
@@ -470,7 +508,7 @@ footer a { color:var(--primary-blue); text-decoration:none; }
             <span class="dosage-label">💊 劑型：</span>
             <button class="dosage-btn active" data-dosage="all">全部</button>
         </div>
-        <p class="search-hint">💡 預設僅顯示健保品項。可切換篩選條件。搜尋結果最多 30 筆。</p>
+        <p class="search-hint">💡 預設以品名搜尋、僅顯示健保品項；成分請切換「搜尋範圍」。輸入 2 字以上會出現建議。搜尋結果最多 30 筆。</p>
         <div class="init-banner" id="initBanner">
             <div class="mini-spinner"></div>
             <span>正在載入藥品資料庫，請稍候…</span>
@@ -510,13 +548,20 @@ const resultsMeta      = document.getElementById('resultsMeta');
 const errorMsg         = document.getElementById('errorMsg');
 const initBanner       = document.getElementById('initBanner');
 const dataBadge        = document.getElementById('dataBadge');
-const filterBtns       = document.querySelectorAll('.filter-btn');
+const filterBtns       = document.querySelectorAll('.filter-btn[data-filter]');
+const scopeBtns        = document.querySelectorAll('.scope-btn');
+const suggestBox       = document.getElementById('suggestBox');
 
 let drugDatabase = [];
 let currentFilter = 'nhi';      // 預設健保品項
+let currentScope  = 'name';      // 搜尋範圍：name / ingredient / both
 let currentDosage = 'all';       // 劑型篩選
 let lastResults   = null;        // 快取上次搜尋結果以便切換篩選即時生效
 let lastKeyword   = '';          // 快取關鍵字供高亮使用
+
+// 建立於資料載入後，供搜尋與 autosuggest 共用
+let ingredientIndex = [];        // [{ name, count }]，依 count 遞減
+let nameIndex       = [];        // [{ name, lower }]，相異品名（中英）
 
 const showError = msg => { errorMsg.textContent = msg; errorMsg.classList.add('active'); };
 const hideError = ()  => errorMsg.classList.remove('active');
@@ -536,6 +581,8 @@ async function initDatabase() {
             ? new Date(meta.generatedAt).toLocaleDateString('zh-TW')
             : '未知';
 
+        buildIndexes();
+
         searchInput.disabled = false;
         searchBtn.disabled = false;
         initBanner.style.display = 'none';
@@ -550,6 +597,56 @@ async function initDatabase() {
         dataBadge.textContent = '載入失敗';
     }
 }
+
+// ── Indexes（載入後建一次，供搜尋與 autosuggest 共用）──────────
+function splitIngredients(raw) {
+    // 資料格式：以 ;; 分隔，鹽類寫在括號內，例如
+    // "CLAVULANATE (POTASSIUM);;AMOXICILLIN (AS TRIHYDATE)"
+    return (raw || '').split(/[;；]+/).map(s => s.trim()).filter(Boolean);
+}
+
+function buildIndexes() {
+    const ingCounts = new Map();
+    const nameSet   = new Set();
+
+    drugDatabase.forEach(d => {
+        // 預先小寫化，避免每次搜尋重複轉換
+        d._chLower  = (d.chName || '').toLowerCase();
+        d._enLower  = (d.enName || '').toLowerCase();
+        d._ingLower = (d.ingredients || '').toLowerCase();
+
+        splitIngredients(d.ingredients).forEach(part => {
+            // 去掉括號內的鹽類／型態，讓 suggest 收斂到主成分
+            const base = part.replace(/\(.*?\)/g, '').trim().toUpperCase();
+            if (base) ingCounts.set(base, (ingCounts.get(base) || 0) + 1);
+        });
+
+        if (d.chName) nameSet.add(d.chName);
+        if (d.enName) nameSet.add(d.enName);
+    });
+
+    ingredientIndex = [...ingCounts.entries()]
+        .map(([name, count]) => ({ name, lower: name.toLowerCase(), count }))
+        .sort((a, b) => b.count - a.count);
+
+    nameIndex = [...nameSet].map(name => ({ name, lower: name.toLowerCase() }));
+}
+
+// ── Scope buttons ─────────────────────────────────────────────
+scopeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        scopeBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentScope = btn.dataset.scope;
+        searchInput.placeholder = {
+            'name':       '請輸入藥品中文品名或英文品名（例如：Norvasc、脈優）',
+            'ingredient': '請輸入成分英文名（例如：AMLODIPINE、METFORMIN）',
+            'both':       '請輸入品名或成分（例如：脈優、AMLODIPINE）',
+        }[currentScope];
+        // 範圍改變會改變結果集本身，需重跑搜尋
+        if (searchInput.value.trim()) searchDrugs();
+    });
+});
 
 // ── Filter buttons ────────────────────────────────────────────
 filterBtns.forEach(btn => {
@@ -651,10 +748,17 @@ function searchDrugs() {
     setTimeout(() => {
         const lower = keyword.toLowerCase();
         lastKeyword = keyword;   // 供高亮使用
-        lastResults = drugDatabase.filter(d =>
-            (d.chName || '').toLowerCase().includes(lower) ||
-            (d.enName || '').toLowerCase().includes(lower)
-        );
+
+        const matchName = d => d._chLower.includes(lower) || d._enLower.includes(lower);
+        // 直接比對原始成分字串：AMOXICILLIN 亦可命中 "AMOXICILLIN (AS TRIHYDATE)"
+        const matchIng  = d => d._ingLower.includes(lower);
+        const predicate = {
+            'name':       matchName,
+            'ingredient': matchIng,
+            'both':       d => matchName(d) || matchIng(d),
+        }[currentScope];
+
+        lastResults = drugDatabase.filter(predicate);
         buildDosageBtns(lastResults);  // 動態產生劑型按鈕
         loading.classList.remove('active');
         searchBtn.disabled = false;
@@ -701,8 +805,10 @@ function renderResults() {
             'nhi':'健保品項', 'all':'全部藥品', 'non-nhi':'未納健保', 'raw':'原料藥'
         }[currentFilter];
         const dosageLabel = currentDosage !== 'all' ? ` · 劑型：<strong>${currentDosage}</strong>` : '';
+        const scopeLabel = { 'name':'品名', 'ingredient':'成分', 'both':'品名＋成分' }[currentScope];
         resultsMeta.innerHTML = `
-            篩選範圍：<strong>${filterLabel}</strong>${dosageLabel} · 
+            搜尋範圍：<strong>${scopeLabel}</strong> ·
+            篩選範圍：<strong>${filterLabel}</strong>${dosageLabel} ·
             符合 ${filtered.length.toLocaleString()} 筆
             ${filtered.length > 30 ? `（顯示前 30 筆，請使用更精確的關鍵字）` : ''}
         `;
@@ -928,9 +1034,136 @@ function escapeAttr(s) {
     return String(s).replace(/"/g, '&quot;');
 }
 
+// ── Autosuggest ───────────────────────────────────────────────
+const SUGGEST_MIN_CHARS = 2;
+const SUGGEST_PER_GROUP = 5;
+let suggestions   = [];   // [{ type:'ingredient'|'name', text, count }]
+let suggestActive = -1;   // 鍵盤選取中的索引
+let suggestTimer  = null;
+
+// 前綴命中優先於中段命中，較符合使用者輸入直覺
+function rankMatches(list, lower, limit) {
+    const prefix = [], substr = [];
+    for (const item of list) {
+        const pos = item.lower.indexOf(lower);
+        if (pos === 0)      prefix.push(item);
+        else if (pos > 0)   substr.push(item);
+        if (prefix.length >= limit) break;
+    }
+    return prefix.concat(substr).slice(0, limit);
+}
+
+function buildSuggestions(keyword) {
+    const lower = keyword.toLowerCase();
+    const out = [];
+
+    // 成分建議在「品名」範圍下也顯示：預設範圍是品名，若不給這條捷徑，
+    // 使用者打成分名只會拿到品名恰好含該字串的少數幾筆而不自知。
+    // 點選後 applySuggestion 會明確切換範圍鈕，不會靜默改變結果集。
+    rankMatches(ingredientIndex, lower, SUGGEST_PER_GROUP)
+        .forEach(i => out.push({ type:'ingredient', text:i.name, count:i.count }));
+
+    if (currentScope !== 'ingredient') {
+        rankMatches(nameIndex, lower, SUGGEST_PER_GROUP)
+            .forEach(n => out.push({ type:'name', text:n.name, count:0 }));
+    }
+    return out;
+}
+
+function renderSuggestions(keyword) {
+    if (!suggestions.length) { closeSuggest(); return; }
+
+    let html = '', lastType = null;
+    suggestions.forEach((s, idx) => {
+        if (s.type !== lastType) {
+            html += `<div class="suggest-group">${s.type === 'ingredient' ? '💊 成分' : '📦 品名'}</div>`;
+            lastType = s.type;
+        }
+        const count = s.count ? `<span class="s-count">${s.count} 筆</span>` : '';
+        html += `
+            <div class="suggest-item${idx === suggestActive ? ' active' : ''}"
+                 role="option" aria-selected="${idx === suggestActive}" data-idx="${idx}">
+                <span class="s-text">${highlight(s.text, keyword)}</span>${count}
+            </div>`;
+    });
+
+    suggestBox.innerHTML = html;
+    suggestBox.classList.add('active');
+    searchInput.setAttribute('aria-expanded', 'true');
+}
+
+function closeSuggest() {
+    suggestBox.classList.remove('active');
+    suggestBox.innerHTML = '';
+    searchInput.setAttribute('aria-expanded', 'false');
+    suggestions = [];
+    suggestActive = -1;
+}
+
+function applySuggestion(idx) {
+    const s = suggestions[idx];
+    if (!s) return;
+    searchInput.value = s.text;
+    // 點選成分時自動切到成分範圍，避免成分名以品名去搜而 0 筆
+    if (s.type === 'ingredient' && currentScope === 'name') {
+        scopeBtns.forEach(b => b.classList.toggle('active', b.dataset.scope === 'ingredient'));
+        currentScope = 'ingredient';
+    }
+    closeSuggest();
+    searchDrugs();
+}
+
+function moveSuggest(delta) {
+    if (!suggestions.length) return;
+    suggestActive = (suggestActive + delta + suggestions.length) % suggestions.length;
+    renderSuggestions(searchInput.value.trim());
+    suggestBox.querySelector('.suggest-item.active')?.scrollIntoView({ block:'nearest' });
+}
+
+searchInput.addEventListener('input', () => {
+    clearTimeout(suggestTimer);
+    const keyword = searchInput.value.trim();
+    if (keyword.length < SUGGEST_MIN_CHARS) { closeSuggest(); return; }
+    // debounce：品名索引達 4 萬筆，逐字掃描會有感延遲
+    suggestTimer = setTimeout(() => {
+        suggestActive = -1;
+        suggestions = buildSuggestions(keyword);
+        renderSuggestions(keyword);
+    }, 150);
+});
+
+suggestBox.addEventListener('mousedown', e => {
+    // mousedown 而非 click：搶在 input blur 關閉選單之前處理
+    const item = e.target.closest('.suggest-item');
+    if (!item) return;
+    e.preventDefault();
+    applySuggestion(Number(item.dataset.idx));
+});
+
+searchInput.addEventListener('blur', () => setTimeout(closeSuggest, 100));
+searchInput.addEventListener('focus', () => {
+    const keyword = searchInput.value.trim();
+    if (keyword.length >= SUGGEST_MIN_CHARS) {
+        suggestions = buildSuggestions(keyword);
+        renderSuggestions(keyword);
+    }
+});
+
 // ── Events ────────────────────────────────────────────────────
-searchBtn.addEventListener('click', searchDrugs);
-searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchDrugs(); });
+searchBtn.addEventListener('click', () => { closeSuggest(); searchDrugs(); });
+searchInput.addEventListener('keydown', e => {
+    const open = suggestBox.classList.contains('active');
+    switch (e.key) {
+        case 'ArrowDown': if (open) { e.preventDefault(); moveSuggest(1); }  break;
+        case 'ArrowUp':   if (open) { e.preventDefault(); moveSuggest(-1); } break;
+        case 'Escape':    closeSuggest(); break;
+        case 'Enter':
+            e.preventDefault();
+            if (open && suggestActive >= 0) applySuggestion(suggestActive);
+            else { closeSuggest(); searchDrugs(); }
+            break;
+    }
+});
 
 initDatabase();
 
