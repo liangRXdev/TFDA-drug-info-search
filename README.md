@@ -96,6 +96,8 @@ python -m http.server 8000
 
   JS heap 峰值約 138MB（桌機上限 4192MB，無虞）。**低階行動裝置之 heap 上限遠低於此，尚未實測**，若日後回報行動端崩潰，應優先從此處查起。
 * **API 端點穩定性：** `build_data.py` 依賴 TFDA 開放資料平台的 URL 結構與 JSON Key 命名。若政府端無預警更動 Schema，將導致 GitHub Actions 構建失敗，需隨時檢視 Action 執行日誌。
-* **資料快取策略 (SWR)：** `sw.js` 對 `drugs_data.json` 採 stale-while-revalidate——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（數百 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
+* **資料快取策略 (SWR)：** `sw.js` 對 `drugs_data.json` 採 stale-while-revalidate——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（0 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
+
+  註：Service Worker 於**首次**造訪時是在 `drugs_data.json` 請求發出後才完成註冊，故攔截不到該次請求、亦無從快取。**第 2 次**造訪才由 SW 接手並寫入快取，**第 3 次**起才進入 304 穩態。測試快取行為時若只重載一次會誤判為失效。
 * **Service Worker 快取版本：** 修改 `index.html` 後必須同步提升 `sw.js` 之 `STATIC_CACHE` 版本號，否則既有使用者將持續取得快取中的舊版頁面，新功能不會生效。
 
