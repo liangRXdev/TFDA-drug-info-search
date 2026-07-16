@@ -102,5 +102,12 @@ python -m http.server 8000
 * **資料快取策略 (SWR)：** `sw.js` 對 `drugs_data.json` 採 stale-while-revalidate——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（0 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
 
   註：Service Worker 於**首次**造訪時是在 `drugs_data.json` 請求發出後才完成註冊，故攔截不到該次請求、亦無從快取。**第 2 次**造訪才由 SW 接手並寫入快取，**第 3 次**起才進入 304 穩態。測試快取行為時若只重載一次會誤判為失效。
-* **Service Worker 快取版本：** 修改 `index.html` 後必須同步提升 `sw.js` 之 `STATIC_CACHE` 版本號，否則既有使用者將持續取得快取中的舊版頁面，新功能不會生效。
+* **Service Worker 快取版本：** 修改 `index.html` 後**建議**同步提升 `sw.js` 之 `STATIC_CACHE` 版本號，但理由與直覺相反，以下為實測結果：
+
+  | 情境 | 不升版號 | 升版號 |
+  | :--- | :--- | :--- |
+  | 線上使用者看到的頁面 | ✅ 新版 | ✅ 新版 |
+  | 離線快取中的頁面 | ❌ 仍為舊版 | ✅ 新版 |
+
+  `index.html` 走 **network-first**（見 `sw.js` 末段），故**線上使用者一律取得最新頁面，與版本號無關**——升版號並非新功能生效的前提。真正的作用是刷新**離線副本**：network-first 分支中的 `cache.put` 為 fire-and-forget（未受 `waitUntil` 保護），SW 事件結束即遭丟棄，實測不會更新快取；唯有提升版本號觸發 `install` 的 `addAll` 重新預快取，並由 `activate` 清除舊 cache，離線副本才會更新。因此**不升版號的後果是離線使用者停留在舊介面，而非全體使用者**。
 
