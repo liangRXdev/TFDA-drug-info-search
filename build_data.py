@@ -259,12 +259,28 @@ def ingredient_core(s):
     return set(re.findall(r'[A-Z]{5,}', s.upper())) - INGREDIENT_NOISE
 
 
-def ingredients_match(fda_ingr, nhi_ingr):
+def match_confidence(fda_ingr, nhi_ingr):
+    """成分比對信心度 → 'verified' | 'code-only' | 'none'。
+
+    - verified  ：雙方都抽得出成分 token 且有交集，成分已確認
+    - code-only ：至少一方抽不出可比對的成分（欄位空白、中文成分，或
+                  成分名短於 ingredient_core() 的 5 字母門檻，如 IRON/ZINC/UREA），
+                  僅靠許可證↔健保代號前綴匹配，未經成分驗證
+    - none      ：雙方都有成分但無交集，判定為不同藥品
+
+    刻意保留 code-only 為「匹配成立」：TFDA 成分欄位大量為空或為中文，
+    若一律排除會使這些品項全數失去健保歸屬——藥師查不到比偶發誤配更危險。
+    改以標記讓前端能區隔顯示，並使弱匹配的規模變成可觀測數字。
+    """
     f = ingredient_core(fda_ingr)
     n = ingredient_core(nhi_ingr)
     if not f or not n:
-        return True
-    return bool(f & n)
+        return 'code-only'
+    return 'verified' if (f & n) else 'none'
+
+
+def ingredients_match(fda_ingr, nhi_ingr):
+    return match_confidence(fda_ingr, nhi_ingr) != 'none'
 
 
 def detect_field(rows, *patterns):
@@ -329,6 +345,22 @@ def nhi_is_current(valid_from, valid_to, today):
     if s and s > today:      # 尚未生效
         return False, False
     return True, False
+
+
+def select_primary_match(matches):
+    """從已排序的 NHI 匹配清單挑出「主要紀錄」，供卡片頂層摘要顯示。
+
+    確定性規則：優先取有給付規定章節者，同條件下取代號最小者；皆無則取第一筆。
+    原實作依賴 set／dict 迭代順序，同一份輸入在不同次建置會選出不同紀錄，
+    導致頂層 nhiChapter／nhiAtcCode 與明細表格對不起來。
+
+    回傳 {} 表示無匹配。
+    """
+    if not matches:
+        return {}
+    with_chapter = [m for m in matches if m.get("chapter")]
+    pool = with_chapter or matches
+    return min(pool, key=lambda m: m.get("code", ""))
 
 
 def price_value(s):
@@ -515,6 +547,7 @@ def main():
     output = []
     seen_licenses = set()   # 去重：同一許可證字號只保留第一筆（API 37 有重複資料）
     raw_count = matched_nhi = with_chapter = with_chapter_link = 0
+    conf_verified = conf_code_only = 0   # 成分比對信心度統計（弱匹配規模需可觀測）
     for drug in raw37:
         lic = (drug.get("許可證字號") or "").strip()
         if not lic or lic in seen_licenses:
@@ -526,21 +559,29 @@ def main():
             raw_count += 1
 
         # 收集所有匹配的 NHI 紀錄（同一許可證可能有多個包裝規格）
+        # fda_lic_to_keys() 回傳 set，而 Python 字串 hash 每個 process 重新隨機化，
+        # 直接迭代會使同一份輸入在不同次建置產生不同的輸出順序與主要紀錄。
+        # 故此處對 key 排序，最後再對 matches 排序，確保建置可重現。
         nhi_matches = []
-        nhi_primary = {}   # 主要紀錄（用於健保區塊顯示章節）
         if not is_raw:
             fda_ingr = drug.get(K37_ingredient) if K37_ingredient else ""
             seen_codes = set()
-            for k in fda_lic_to_keys(lic):
+            for k in sorted(fda_lic_to_keys(lic)):
                 for c in nhi_index.get(k, []):
                     code = c.get("nhiDrugCode", "")
                     if not code or code in seen_codes:
                         continue
-                    if not ingredients_match(fda_ingr, c.get("nhiIngredient", "")):
+                    conf = match_confidence(fda_ingr, c.get("nhiIngredient", ""))
+                    if conf == 'none':
                         continue
                     seen_codes.add(code)
+                    if conf == 'verified':
+                        conf_verified += 1
+                    else:
+                        conf_code_only += 1
                     nhi_matches.append({
                         "code":    code,
+                        "confidence": conf,   # verified=成分已確認 / code-only=僅代號匹配
                         "enName":  c.get("nhiEnName", ""),
                         "chName":  c.get("nhiChName", ""),
                         "chapter": c.get("nhiChapter", ""),
@@ -549,19 +590,19 @@ def main():
                         "atcCode": c.get("nhiAtcCode", ""),
                         "price":   c.get("nhiPrice", ""),
                     })
-                    # 主要紀錄：優先取有給付規定的
-                    if not nhi_primary or (c.get("nhiChapter") and not nhi_primary.get("nhiChapter")):
-                        nhi_primary = c
+            nhi_matches.sort(key=lambda m: m["code"])
+
+        nhi_primary = select_primary_match(nhi_matches)
 
         is_nhi = len(nhi_matches) > 0
         if is_nhi:
             matched_nhi += 1
-        if nhi_primary.get("nhiChapter"):
+        if nhi_primary.get("chapter"):
             with_chapter += 1
-        if nhi_primary.get("nhiChapterLink"):
+        if nhi_primary.get("chapterLink"):
             with_chapter_link += 1
 
-        chapter_details = lookup_chapter(nhi_primary.get("nhiChapter", ""), nhi_chapters)
+        chapter_details = lookup_chapter(nhi_primary.get("chapter", ""), nhi_chapters)
 
         # 食藥署新版電子仿單連結（穩定）— 每張許可證都有
         fda_package_url = FDA_PACKAGE_INSERT_URL.format(license=lic)
@@ -577,9 +618,10 @@ def main():
             "packageLinks":     pkg_dict.get(lic, []),
             "fdaPackageUrl":    fda_package_url,
             "imageLinks":       img_dict.get(lic, []),
-            "nhiChapter":       nhi_primary.get("nhiChapter", ""),
-            "nhiChapterLink":   nhi_primary.get("nhiChapterLink", ""),
-            "nhiAtcCode":       nhi_primary.get("nhiAtcCode", ""),
+            "nhiChapter":       nhi_primary.get("chapter", ""),
+            "nhiChapterLink":   nhi_primary.get("chapterLink", ""),
+            "nhiAtcCode":       nhi_primary.get("atcCode", ""),
+            "nhiPrimaryCode":   nhi_primary.get("code", ""),   # 頂層摘要的來源代號，供 UI 標示出處
             "nhiMatches":       nhi_matches,     # 所有匹配的 NHI 品項（含代號、品名、規格、支付價、ATC）
             "chapterDetails":   chapter_details,
             "isRawMaterial":    is_raw,
@@ -589,6 +631,10 @@ def main():
     print(f"  總筆數：{len(output):,}")
     print(f"  原料藥：{raw_count:,}")
     print(f"  健保品項：{matched_nhi:,}（含特殊規定 {with_chapter:,}，含章節連結 {with_chapter_link:,}）")
+    conf_total = conf_verified + conf_code_only
+    if conf_total:
+        print(f"  成分比對：verified {conf_verified:,}（{conf_verified/conf_total:.1%}）| "
+              f"code-only {conf_code_only:,}（{conf_code_only/conf_total:.1%}，僅代號匹配未驗證成分）")
 
     # ── Step 4：輸出 ────────────────────────────────────────────
     print(f"\n【Step 4】寫入 {OUTPUT_FILE}...")
@@ -601,6 +647,8 @@ def main():
                 "withChapter":    with_chapter,
                 "rawMaterials":   raw_count,
                 "chaptersTotal":  len(nhi_chapters),
+                "matchVerified":  conf_verified,
+                "matchCodeOnly":  conf_code_only,
             },
             "data": output,
         }, f, ensure_ascii=False, separators=(",", ":"))
