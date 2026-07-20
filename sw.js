@@ -1,4 +1,4 @@
-const STATIC_CACHE = 'tfda-static-v4';   // index.html 有異動時須同步提升（見 README）
+const STATIC_CACHE = 'tfda-static-v5';   // index.html／app.js 有異動時須同步提升（見 README）
 const DATA_CACHE   = 'tfda-data-v2';
 const FONT_CACHE   = 'tfda-fonts-v2';
 const ALL_CACHES   = [STATIC_CACHE, DATA_CACHE, FONT_CACHE];
@@ -52,6 +52,14 @@ async function revalidateData(request, cachedETag) {
 
   if (resp.status === 304) return;            // 資料未變，不動快取
   if (!resp.ok) return;
+
+  // 主機未實作或忽略 If-None-Match 時會一律回 200。此時若直接採信，
+  // 會在內容其實沒變的情況下每次都重寫快取並跳出「有新版」提示。
+  // ETag 相同即代表內容未變——這個比對必須在驗證之前，因為驗證要解析
+  // 20MB+ 的 JSON，而絕大多數次的更新檢查其實無事可做。
+  const newETag = resp.headers.get('ETag');
+  if (newETag && cachedETag && newETag === cachedETag) return;
+
   if (!await isValidDataResponse(resp)) {
     // 驗證失敗時保留舊快取：寧可用舊資料，也不要讓使用者陷入永久壞掉的狀態
     await notifyClients('DATA_UPDATE_FAILED');
@@ -64,6 +72,19 @@ async function revalidateData(request, cachedETag) {
   await notifyClients('DATA_UPDATED');
 }
 
+// single-flight：多個分頁或連續請求會各自觸發背景更新，若不合併，
+// 同一份 20MB+ 的資料會被同時下載多次，且較早開始、較晚完成的回應
+// 可能覆蓋較新的快取。
+let inflightRevalidate = null;
+
+function revalidateOnce(request, cachedETag) {
+  if (!inflightRevalidate) {
+    inflightRevalidate = revalidateData(request, cachedETag)
+      .finally(() => { inflightRevalidate = null; });
+  }
+  return inflightRevalidate;
+}
+
 async function handleDataRequest(event) {
   const request = event.request;
   const cached = await caches.match(request);
@@ -71,7 +92,7 @@ async function handleDataRequest(event) {
   if (cached) {
     // 背景更新不可用 await 擋住回應，但需 waitUntil 保住 SW 生命週期
     event.waitUntil(
-      revalidateData(request, cached.headers.get('ETag')).catch(() =>
+      revalidateOnce(request, cached.headers.get('ETag')).catch(() =>
         notifyClients('OFFLINE_MODE')   // 背景更新失敗多半是離線
       )
     );
