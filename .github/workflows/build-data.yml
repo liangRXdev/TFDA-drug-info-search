@@ -5,6 +5,11 @@ on:
   schedule:
     - cron: '0 18 * * 0'       # 每週日 UTC 18:00 = 台灣週一 02:00
   push:
+    # 限定 main：本 workflow 會 git push 資料 commit，若不限分支，
+    # 任何功能分支推送 build_data.py 都會跑完整建置並把 20MB+ 的資料
+    # commit 推回該分支，污染 PR 且浪費 runner 時間。
+    branches:
+      - main
     paths:
       - 'build_data.py'
       - 'nhi_payment_rules.pdf'  # PDF 更新時也重跑
