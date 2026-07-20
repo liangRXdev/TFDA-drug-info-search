@@ -538,6 +538,9 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 
 <script>
 const DATA_URL = './drugs_data.json';
+// 建置時間戳獨立成小檔：若寫在 drugs_data.json 內，該檔每次建置必然改變，
+// CI 的「資料無變動則跳過 commit」會永遠失效
+const VERSION_URL = './data_version.json';
 
 const searchInput      = document.getElementById('searchInput');
 const searchBtn        = document.getElementById('searchBtn');
@@ -569,7 +572,11 @@ const hideError = ()  => errorMsg.classList.remove('active');
 // ── Init ──────────────────────────────────────────────────────
 async function initDatabase() {
     try {
-        const resp = await fetch(DATA_URL);
+        // 版本資訊取不到不應阻斷主資料載入，故獨立 catch
+        const [resp, version] = await Promise.all([
+            fetch(DATA_URL),
+            fetch(VERSION_URL).then(r => r.ok ? r.json() : null).catch(() => null),
+        ]);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         drugDatabase = Array.isArray(json) ? json : (json.data || []);
@@ -577,8 +584,8 @@ async function initDatabase() {
         const meta = json._meta || {};
         const total = (meta.totalRecords || drugDatabase.length).toLocaleString();
         const nhi   = (meta.nhiRecords || 0).toLocaleString();
-        const date  = meta.generatedAt
-            ? new Date(meta.generatedAt).toLocaleDateString('zh-TW')
+        const date  = version && version.generatedAt
+            ? new Date(version.generatedAt).toLocaleDateString('zh-TW')
             : '未知';
 
         buildIndexes();

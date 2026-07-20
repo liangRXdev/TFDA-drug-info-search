@@ -41,8 +41,9 @@ NHI_PDF_PAGE = "https://www.nhi.gov.tw/ch/cp-13108-67ddf-2508-1.html"
 # 食藥署電子仿單新版查詢 URL（直接帶許可證字號，最穩定）
 FDA_PACKAGE_INSERT_URL = "https://mcp.fda.gov.tw/im_detail_1/{license}"
 
-OUTPUT_FILE = "drugs_data.json"
-TIMEOUT_SEC = 180
+OUTPUT_FILE  = "drugs_data.json"
+VERSION_FILE = "data_version.json"   # 建置時間戳獨立存放，見 Step 4 說明
+TIMEOUT_SEC  = 180
 
 # NHI 有效起迄日「非空但無法解析」的容忍上限；超過即視為來源格式變更並中止
 MAX_BAD_DATE_RATIO = 0.01
@@ -637,11 +638,14 @@ def main():
               f"code-only {conf_code_only:,}（{conf_code_only/conf_total:.1%}，僅代號匹配未驗證成分）")
 
     # ── Step 4：輸出 ────────────────────────────────────────────
+    # 建置時間戳刻意「不」寫入 drugs_data.json：它每次必然改變，會使
+    # workflow 的「資料無變動則跳過 commit」永遠無法生效，每週固定產生
+    # 一個 20MB+ 的 commit。改寫入獨立的 VERSION_FILE，並只在資料真的
+    # 變動時才一起 commit——如此「更新日期」也才真正代表資料更新時間。
     print(f"\n【Step 4】寫入 {OUTPUT_FILE}...")
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "_meta": {
-                "generatedAt":    datetime.now().isoformat(),
                 "totalRecords":   len(output),
                 "nhiRecords":     matched_nhi,
                 "withChapter":    with_chapter,
@@ -653,6 +657,14 @@ def main():
             "data": output,
         }, f, ensure_ascii=False, separators=(",", ":"))
     print(f"  ✓  完成（{os.path.getsize(OUTPUT_FILE)/1e6:.2f} MB）")
+
+    with open(VERSION_FILE, "w", encoding="utf-8") as f:
+        json.dump({
+            "generatedAt":   datetime.now().isoformat(),
+            "totalRecords":  len(output),
+            "nhiRecords":    matched_nhi,
+        }, f, ensure_ascii=False, indent=2)
+    print(f"  ✓  版本資訊寫入 {VERSION_FILE}")
 
     # ── Step 5：驗證 ────────────────────────────────────────────
     print("\n【Step 5】驗證範例...")

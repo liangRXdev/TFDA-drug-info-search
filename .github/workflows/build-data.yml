@@ -73,10 +73,13 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 僅以 drugs_data.json 判定是否有變動。data_version.json 只含建置
+          # 時間戳，每次必然改變；若納入判定，跳過機制將永遠無法生效。
           git add drugs_data.json
-          if git diff --staged --quiet; then
-            echo "📋 資料無變動，跳過 commit"
+          if git diff --staged --quiet -- drugs_data.json; then
+            echo "📋 資料無變動，跳過 commit（本次建置的時間戳一併捨棄）"
           else
+            git add data_version.json
             git commit -m "data: 自動更新藥品資料庫 $(date +'%Y-%m-%d')"
             git push
             echo "✅ 已自動更新 drugs_data.json"
