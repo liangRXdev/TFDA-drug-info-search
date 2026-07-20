@@ -20,8 +20,25 @@
 系統工具：pdftotext（poppler-utils；GitHub Actions Ubuntu 預裝）
 """
 
-import json, sys, os, re, time, io, csv, zipfile, subprocess, tempfile
+import csv
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
 from datetime import datetime, date
+
+# 本腳本大量以 emoji 標示進度。Windows 主控台預設 cp950 無法編碼這些字元，
+# print() 會拋 UnicodeEncodeError，而該例外一旦落入下方的下載函式，
+# 會被誤報成「下載失敗」——編碼問題偽裝成網路問題，極難排查。
+# CI（Ubuntu/UTF-8）不受影響，此處是為了讓本機也能直接執行。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 try:
     import requests
@@ -35,9 +52,6 @@ API_39  = "https://data.fda.gov.tw/data/opendata/export/39/json"
 API_42  = "https://data.fda.gov.tw/data/opendata/export/42/json"
 API_NHI = "https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-E41001-001"
 
-# 健保署完整給付規定 PDF 來源網頁
-NHI_PDF_PAGE = "https://www.nhi.gov.tw/ch/cp-13108-67ddf-2508-1.html"
-
 # 食藥署電子仿單新版查詢 URL（直接帶許可證字號，最穩定）
 FDA_PACKAGE_INSERT_URL = "https://mcp.fda.gov.tw/im_detail_1/{license}"
 
@@ -47,6 +61,19 @@ TIMEOUT_SEC  = 180
 
 # NHI 有效起迄日「非空但無法解析」的容忍上限；超過即視為來源格式變更並中止
 MAX_BAD_DATE_RATIO = 0.01
+
+RETRY_BASE_SEC = 5   # 下載重試的退避基數（指數成長：5、10、20…）
+
+# 下載／解析階段預期會遇到的例外。刻意不catch Exception：
+# 例如 print() 的 UnicodeEncodeError 若被吞掉，會偽裝成「下載失敗」，
+# 使一個編碼問題看起來像四個網路問題（2026-07-20 實際踩過）。
+FETCH_ERRORS = (
+    requests.RequestException,
+    zipfile.BadZipFile,
+    json.JSONDecodeError,
+    csv.Error,
+    OSError,
+)
 
 INGREDIENT_NOISE = {
     'BESYLATE','MALEATE','HYDROCHLORIDE','HCL','SULFATE','SULPHATE',
@@ -77,12 +104,28 @@ def download(url, label, max_retries=3):
             data = b''.join(resp.iter_content(chunk_size=1024 * 1024))  # 1 MB chunks
             print(f"     ✓  下載完成（{len(data)/1e6:.2f} MB，{time.time()-start:.1f} 秒）")
             return data
-        except Exception as e:
-            if attempt < max_retries:
-                print(f"     ⚠  第 {attempt} 次失敗，5 秒後重試：{e}")
-                time.sleep(5)
-            else:
+        except requests.RequestException as e:
+            if not is_retryable(e):
+                # 4xx（除 429 外）重試多少次都是同樣結果，只是白耗 CI 時間
+                print(f"     ✗  不可重試的錯誤，放棄：{e}", file=sys.stderr)
                 raise
+            if attempt >= max_retries:
+                raise
+            wait = RETRY_BASE_SEC * (2 ** (attempt - 1))   # 指數退避
+            print(f"     ⚠  第 {attempt} 次失敗，{wait} 秒後重試：{e}")
+            time.sleep(wait)
+
+
+def is_retryable(exc):
+    """判斷 requests 例外是否值得重試：連線/逾時類是暫時性的，
+    4xx 屬用戶端錯誤（429 除外，那是限流）。"""
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return True          # 連線錯誤、逾時等，無回應可判斷 → 視為暫時性
+    code = resp.status_code
+    if code == 429 or code >= 500:
+        return True
+    return not (400 <= code < 500)
 
 
 def smart_decode(raw):
@@ -112,8 +155,8 @@ def fetch_fda_json(url, label):
         result = json.loads(smart_decode(inner))
         print(f"     ✓  解析成功，筆數：{len(result):,}")
         return result
-    except Exception as e:
-        print(f"     ✗  失敗：{e}", file=sys.stderr)
+    except FETCH_ERRORS as e:
+        print(f"     ✗  失敗：{type(e).__name__}: {e}", file=sys.stderr)
         return []
 
 
@@ -124,8 +167,8 @@ def fetch_nhi_csv(url, label):
         records = list(csv.DictReader(io.StringIO(text)))
         print(f"     ✓  CSV 解析成功，筆數：{len(records):,}")
         return records
-    except Exception as e:
-        print(f"     ✗  失敗：{e}", file=sys.stderr)
+    except FETCH_ERRORS as e:
+        print(f"     ✗  失敗：{type(e).__name__}: {e}", file=sys.stderr)
         return []
 
 
@@ -148,28 +191,33 @@ def fetch_nhi_chapters():
 
     print(f"     ℹ  讀取本地 PDF：{LOCAL_PDF_PATH}（{os.path.getsize(LOCAL_PDF_PATH)/1e6:.1f} MB）")
 
+    # 用暫存目錄而非在 repo 根目錄產生 _extracted.txt：
+    # 原作法在 pdftotext 失敗或程序中斷時會把中間檔留在工作目錄，
+    # 且該檔未列入 .gitignore，有被誤 commit 的風險。
     try:
-        txt_path = LOCAL_PDF_PATH.replace(".pdf", "_extracted.txt")
-        result = subprocess.run(
-            ["pdftotext", "-layout", LOCAL_PDF_PATH, txt_path],
-            capture_output=True, timeout=120
-        )
-        if result.returncode != 0:
-            print(f"     ✗  pdftotext 失敗：{result.stderr.decode('utf-8', 'replace')}")
-            return {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            txt_path = os.path.join(tmpdir, "extracted.txt")
+            result = subprocess.run(
+                ["pdftotext", "-layout", LOCAL_PDF_PATH, txt_path],
+                capture_output=True, timeout=120
+            )
+            if result.returncode != 0:
+                print(f"     ✗  pdftotext 失敗：{result.stderr.decode('utf-8', 'replace')}")
+                return {}
 
-        with open(txt_path, "r", encoding="utf-8") as f:
-            text = f.read()
+            with open(txt_path, "r", encoding="utf-8") as f:
+                text = f.read()
 
-        os.unlink(txt_path)
         print(f"     ℹ  提取文字 {len(text):,} 字元")
 
         chapters = parse_chapters(text)
         print(f"     ✓  解析得 {len(chapters):,} 個章節")
         return chapters
 
-    except Exception as e:
-        print(f"     ⚠  PDF 解析失敗：{e}（將使用無對照模式）")
+    except (OSError, subprocess.SubprocessError) as e:
+        # pdftotext 不存在（本機常見）、逾時、或檔案讀寫失敗皆屬預期範圍，
+        # 降級為無章節對照模式而非中止建置
+        print(f"     ⚠  PDF 解析失敗：{type(e).__name__}: {e}（將使用無對照模式）")
         return {}
 
 
@@ -285,6 +333,11 @@ def ingredients_match(fda_ingr, nhi_ingr):
 
 
 def detect_field(rows, *patterns):
+    """依 patterns 順序找出對應的欄位名：先精確比對，再模糊包含比對。
+
+    模糊比對命中多個候選時會印出警告——來源新增相似欄位時，
+    原本會靜默改抓到別的欄位，屬於難以察覺的資料錯置。
+    """
     if not rows:
         return None
     keys = [str(k).strip() for k in rows[0].keys()]
@@ -292,9 +345,12 @@ def detect_field(rows, *patterns):
         if p in keys:
             return p
     for p in patterns:
-        for k in keys:
-            if p in k:
-                return k
+        hits = [k for k in keys if p in k]
+        if hits:
+            if len(hits) > 1:
+                print(f"     ⚠  欄位「{p}」模糊比對命中多個候選 {hits}，"
+                      f"採用第一個：{hits[0]}", file=sys.stderr)
+            return hits[0]
     return None
 
 
@@ -370,6 +426,28 @@ def price_value(s):
         return float((s or "0").strip() or 0)
     except ValueError:
         return 0.0
+
+
+# 健保署以 "-" 表示「無支付價／不單獨計價」，屬既定慣例而非髒資料。
+# 2026-07-20 實測：全部 224,455 列中有 975 列為 "-"，且異常值僅此一種。
+# 若不排除，警告會被這類正常標記淹沒而失去偵測價值。
+NO_PRICE_MARKERS = {"-", "－", "—", "N/A", "NA", "無"}
+
+
+def price_is_malformed(s):
+    """支付價非空、非已知的「無價格」標記、卻又無法解析成數字 → True。
+
+    因為現行價 <= 0 會使該品項被整筆剔除，「格式真的壞掉」與「來源標示無價格」
+    會導向同一個結果卻代表完全不同的意義。只有前者值得警告——後者是正常的。
+    """
+    raw = (s or "").strip()
+    if not raw or raw in NO_PRICE_MARKERS:
+        return False
+    try:
+        float(raw)
+        return False
+    except ValueError:
+        return True
 
 
 # ── 主流程 ──────────────────────────────────────────────────────
@@ -465,7 +543,7 @@ def main():
 
     collapsed = []
     drop_expired = drop_zero = 0
-    bad_date_rows = 0
+    bad_date_rows = bad_price_rows = 0
     for code, recs in by_code.items():
         current = []
         for r in recs:
@@ -485,12 +563,18 @@ def main():
         current.sort(key=lambda r: parse_roc_date(r.get(KN_validfrom)) or date.min,
                      reverse=True)
         chosen = current[0]
+        if KN_price and price_is_malformed(chosen.get(KN_price)):
+            bad_price_rows += 1
         if price_value(chosen.get(KN_price)) <= 0:   # 現行支付價 0 = 已停用／被取代
             drop_zero += 1
             continue
         collapsed.append(chosen)
     print(f"  NHI 收斂：原始 {len(raw_nhi):,} 筆 → 代號 {len(by_code):,} 種 → "
           f"現行有效 {len(collapsed):,}（剔除已過期 {drop_expired:,}、現行價0 {drop_zero:,}）")
+
+    if bad_price_rows:
+        print(f"  ⚠  支付價格式無法辨識：{bad_price_rows:,} 筆（非空、非已知的無價格標記"
+              f"{sorted(NO_PRICE_MARKERS)}，仍無法解析為數字，已比照 0 元剔除）")
 
     # 日期解析失敗率門檻：零星髒資料可容忍，大量失敗代表來源格式已變更
     bad_date_ratio = bad_date_rows / len(raw_nhi) if raw_nhi else 0
@@ -546,14 +630,27 @@ def main():
     # ── Step 3：合併 ────────────────────────────────────────────
     print("\n【Step 3】合併資料...")
     output = []
-    seen_licenses = set()   # 去重：同一許可證字號只保留第一筆（API 37 有重複資料）
+    # 去重：同一許可證字號只保留第一筆（API 37 有重複資料）。
+    # 改存首筆內容以便量測「被丟棄的重複列是否真的與首筆不同」——
+    # 在有實據之前，不為假想的資料遺失改寫合併邏輯。
+    seen_licenses = {}
+    dup_rows = dup_conflicting = 0
+    DUP_CHECK_FIELDS = [f for f in ("中文品名", "英文品名",
+                                    K37_indication, K37_ingredient, K37_usage) if f]
     raw_count = matched_nhi = with_chapter = with_chapter_link = 0
     conf_verified = conf_code_only = 0   # 成分比對信心度統計（弱匹配規模需可觀測）
     for drug in raw37:
         lic = (drug.get("許可證字號") or "").strip()
-        if not lic or lic in seen_licenses:
+        if not lic:
             continue
-        seen_licenses.add(lic)
+        if lic in seen_licenses:
+            dup_rows += 1
+            first = seen_licenses[lic]
+            if any((first.get(f) or "").strip() != (drug.get(f) or "").strip()
+                   for f in DUP_CHECK_FIELDS):
+                dup_conflicting += 1
+            continue
+        seen_licenses[lic] = drug
 
         is_raw = is_raw_material(drug)
         if is_raw:
@@ -631,6 +728,10 @@ def main():
 
     print(f"  總筆數：{len(output):,}")
     print(f"  原料藥：{raw_count:,}")
+    if dup_rows:
+        print(f"  重複許可證：{dup_rows:,} 列被丟棄，其中 {dup_conflicting:,} 列"
+              f"與保留的首筆在關鍵欄位上不同"
+              f"{'（值得檢視合併策略）' if dup_conflicting else '（純重複，丟棄無損失）'}")
     print(f"  健保品項：{matched_nhi:,}（含特殊規定 {with_chapter:,}，含章節連結 {with_chapter_link:,}）")
     conf_total = conf_verified + conf_code_only
     if conf_total:

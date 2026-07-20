@@ -136,9 +136,7 @@ function buildDosageBtns(results) {
     // 收集結果中出現的所有劑型
     const counts = {};
     results.forEach(d => {
-        const raw = (d.licenseType || '').replace('劑', '').trim();
-        // 從許可證種類或中文品名猜劑型（API 37 有「劑型」資料在 licenseType 有時是製劑種類）
-        // 改從中文品名、英文品名中的關鍵字萃取
+        // licenseType 有時是製劑種類而非劑型，故改從中文／英文品名的關鍵字萃取
         const dosages = extractDosage(d);
         dosages.forEach(ds => { counts[ds] = (counts[ds] || 0) + 1; });
     });
