@@ -44,6 +44,9 @@ FDA_PACKAGE_INSERT_URL = "https://mcp.fda.gov.tw/im_detail_1/{license}"
 OUTPUT_FILE = "drugs_data.json"
 TIMEOUT_SEC = 180
 
+# NHI 有效起迄日「非空但無法解析」的容忍上限；超過即視為來源格式變更並中止
+MAX_BAD_DATE_RATIO = 0.01
+
 INGREDIENT_NOISE = {
     'BESYLATE','MALEATE','HYDROCHLORIDE','HCL','SULFATE','SULPHATE',
     'SODIUM','CALCIUM','POTASSIUM','MAGNESIUM','PHOSPHATE','CITRATE',
@@ -296,6 +299,38 @@ def parse_roc_date(s):
         return None
 
 
+def classify_roc_date(s):
+    """民國日期字串 → (date|None, status)，status ∈ {'blank','ok','invalid'}。
+    必須區分「欄位空白」與「非空但解析失敗」：前者是資料本來就沒填，
+    後者代表來源格式可能已變更，不可當成同一件事處理。"""
+    s = (s or "").strip()
+    if not s:
+        return None, 'blank'
+    d = parse_roc_date(s)
+    if d is None:
+        return None, 'invalid'
+    return d, 'ok'
+
+
+def nhi_is_current(valid_from, valid_to, today):
+    """判定 NHI 記錄是否為現行有效 → (is_current, has_invalid_date)。
+
+    解析失敗（非空但格式錯誤）一律排除並回報，不得比照空白視為「無期限有效」。
+    否則 NHI 一旦變更日期格式，全部歷史記錄都會被判定為現行有效，
+    使用者將看到早已失效的支付價與給付規定。
+    """
+    s, s_status = classify_roc_date(valid_from)
+    e, e_status = classify_roc_date(valid_to)
+
+    if 'invalid' in (s_status, e_status):
+        return False, True
+    if e and e < today:      # 已逾有效迄日
+        return False, False
+    if s and s > today:      # 尚未生效
+        return False, False
+    return True, False
+
+
 def price_value(s):
     """支付價字串 → float；無法解析回 0.0"""
     try:
@@ -389,15 +424,6 @@ def main():
     # 須挑出涵蓋今日的現行記錄，並排除現行支付價為 0（已停止單獨計價／被新代碼取代）。
     today_date = date.today()
 
-    def nhi_is_current(row):
-        e = parse_roc_date(row.get(KN_validto))   if KN_validto   else None
-        s = parse_roc_date(row.get(KN_validfrom)) if KN_validfrom else None
-        if e and e < today_date:   # 已逾有效迄日
-            return False
-        if s and s > today_date:   # 尚未生效
-            return False
-        return True
-
     by_code = {}
     for row in raw_nhi:
         code = (row.get(KN_drugcode) or "").strip()
@@ -406,8 +432,19 @@ def main():
 
     collapsed = []
     drop_expired = drop_zero = 0
+    bad_date_rows = 0
     for code, recs in by_code.items():
-        current = [r for r in recs if nhi_is_current(r)]
+        current = []
+        for r in recs:
+            ok, bad = nhi_is_current(
+                r.get(KN_validfrom) if KN_validfrom else "",
+                r.get(KN_validto)   if KN_validto   else "",
+                today_date,
+            )
+            if bad:
+                bad_date_rows += 1
+            if ok:
+                current.append(r)
         if not current:
             drop_expired += 1
             continue
@@ -421,6 +458,15 @@ def main():
         collapsed.append(chosen)
     print(f"  NHI 收斂：原始 {len(raw_nhi):,} 筆 → 代號 {len(by_code):,} 種 → "
           f"現行有效 {len(collapsed):,}（剔除已過期 {drop_expired:,}、現行價0 {drop_zero:,}）")
+
+    # 日期解析失敗率門檻：零星髒資料可容忍，大量失敗代表來源格式已變更
+    bad_date_ratio = bad_date_rows / len(raw_nhi) if raw_nhi else 0
+    print(f"  日期解析失敗：{bad_date_rows:,} 筆（{bad_date_ratio:.2%}）")
+    if bad_date_ratio > MAX_BAD_DATE_RATIO:
+        sys.exit(
+            f"⚠  NHI 日期解析失敗率 {bad_date_ratio:.2%} 超過門檻 {MAX_BAD_DATE_RATIO:.0%}，"
+            f"來源日期格式可能已變更，中止以防止把失效品項當成現行有效"
+        )
 
     nhi_index = {}
     nhi_with_chapter = nhi_with_link = 0
