@@ -24,8 +24,7 @@ import json, sys, os, re, time, io, csv, zipfile, subprocess, tempfile
 from datetime import datetime, date
 
 try:
-    import requests, urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    import requests
 except ImportError:
     print("✗  缺少 requests 套件", file=sys.stderr)
     sys.exit(1)
@@ -57,10 +56,10 @@ INGREDIENT_NOISE = {
 # ────────────────────────────────────────────────────────────────
 
 
-def download(url, label, verify=True, max_retries=3):
+def download(url, label, max_retries=3):
+    """下載並回傳 bytes。一律驗證 TLS 憑證——本資料供臨床查詢，
+    傳輸遭竄改等同污染藥品資料，寧可建置失敗也不得降級。"""
     print(f"  ⬇  下載中：{label}")
-    if not verify:
-        print("     ℹ  停用 SSL 驗證")
     headers = {
         "User-Agent": "Mozilla/5.0 TFDA-DrugSearch/1.0",
         "Accept": "*/*",
@@ -68,15 +67,10 @@ def download(url, label, verify=True, max_retries=3):
     for attempt in range(1, max_retries + 1):
         try:
             start = time.time()
-            resp = requests.get(url, timeout=TIMEOUT_SEC, verify=verify,
+            resp = requests.get(url, timeout=TIMEOUT_SEC,
                                 headers=headers, stream=True)
             resp.raise_for_status()
-            chunks = []
-            downloaded = 0
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1 MB chunks
-                chunks.append(chunk)
-                downloaded += len(chunk)
-            data = b''.join(chunks)
+            data = b''.join(resp.iter_content(chunk_size=1024 * 1024))  # 1 MB chunks
             print(f"     ✓  下載完成（{len(data)/1e6:.2f} MB，{time.time()-start:.1f} 秒）")
             return data
         except Exception as e:
@@ -121,7 +115,7 @@ def fetch_fda_json(url, label):
 
 def fetch_nhi_csv(url, label):
     try:
-        raw = download(url, label, verify=False)
+        raw = download(url, label)
         text = smart_decode(raw)
         records = list(csv.DictReader(io.StringIO(text)))
         print(f"     ✓  CSV 解析成功，筆數：{len(records):,}")
