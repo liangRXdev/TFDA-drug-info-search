@@ -44,16 +44,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
 
+      # 只跑 Python 測試：本 workflow 把關的是「資料是否正確」，
+      # 前端測試由 Tests workflow 於 PR／push 時負責，不必在每週建置重跑
       - name: Run unit tests
         run: python -m pytest tests/ -q
-
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
-        with:
-          node-version: '22'
-
-      - name: Run frontend XSS regression tests
-        run: npm ci && npm test
 
       - name: Check PDF status
         run: |

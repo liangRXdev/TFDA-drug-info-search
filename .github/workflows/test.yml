@@ -1,0 +1,71 @@
+name: Tests
+
+# 輕量測試關卡：只跑測試，不下載資料、不建置、不 commit。
+#
+# 存在理由：Build Drug Database 僅在 push 到 main（且 build_data.py 有異動）
+# 或排程時執行，故 PR 完全不會觸發任何 CI。Dependabot 的相依升級曾因此
+# 在未經任何驗證的情況下可被合併，實際壞掉要等一週後的排程才會發現。
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 本 workflow 不寫入任何東西，權限降到唯讀
+permissions:
+  contents: read
+
+# 同一 PR 連續推送時，取消尚在跑的舊 run
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # 與 build-data.yml 相同：一律 pin commit SHA，升級交由 Dependabot 開 PR
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run Python unit tests
+        run: python -m pytest tests/ -q
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run frontend XSS regression tests
+        run: npm test
+
+      # 抓「改了 index.html／app.js 卻忘記把新檔案加進 SW 預快取清單」——
+      # 該疏漏在離線時才會發作，屆時整站無法運作，一般測試抓不到
+      - name: Check service worker precache list
+        run: |
+          for f in index.html app.js manifest.json; do
+            if ! grep -q "\./$f" sw.js; then
+              echo "::error::sw.js 的預快取清單缺少 $f，離線時將缺檔"
+              exit 1
+            fi
+          done
+          echo "✅ SW 預快取清單完整"
