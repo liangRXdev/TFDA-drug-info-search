@@ -24,7 +24,8 @@ jobs:
 
     steps:
       # Actions 一律 pin 到 commit SHA：本 job 具 contents:write，可直接改寫
-      # 供臨床查詢的藥品資料庫。mutable tag（@v5）遭上游投毒即可竄改資料。
+      # 供臨床查詢的藥品資料庫。mutable tag（如 @v7）遭上游投毒即可竄改資料。
+      # 版本升級交由 Dependabot 開 PR，使變更可審而非隱形發生。
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
@@ -45,6 +46,14 @@ jobs:
 
       - name: Run unit tests
         run: python -m pytest tests/ -q
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: Run frontend XSS regression tests
+        run: npm ci && npm test
 
       - name: Check PDF status
         run: |
