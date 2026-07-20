@@ -46,6 +46,14 @@ jobs:
       - name: Run unit tests
         run: python -m pytest tests/ -q
 
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: Run frontend XSS regression tests
+        run: npm ci && npm test
+
       - name: Check PDF status
         run: |
           if [ -f nhi_payment_rules.pdf ]; then

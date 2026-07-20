@@ -4,6 +4,9 @@
 # build_data.py 的 PDF 解析暫存（異常退出時殘留在根目錄）
 nhi_payment_rules_extracted.txt
 
+# Node（僅測試用，見 package.json）
+node_modules/
+
 # Python
 __pycache__/
 *.py[cod]

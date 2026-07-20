@@ -1,0 +1,12 @@
+{
+  "name": "tfda-drug-info-search",
+  "private": true,
+  "type": "module",
+  "description": "測試用設定。本站為單檔零建置靜態頁，不使用 bundler；此處僅供 jsdom 前端測試。",
+  "scripts": {
+    "test": "node --test tests/xss.spec.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}
