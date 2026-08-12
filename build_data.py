@@ -284,12 +284,16 @@ def fda_lic_to_keys(license_str):
 def nhi_code_to_keys(code):
     if not code:
         return set()
-    digits = re.sub(r'^[A-Za-z]+', '', code.strip())
-    if not digits.isdigit():
+    body = re.sub(r'^[A-Za-z]+', '', code.strip())
+    match = re.fullmatch(r'(\d+)[A-Za-z0-9]*', body)
+    if not match:
         return set()
+    digits = match.group(1)
     keys = set()
     for n in (5, 6, 7):
-        if len(digits) >= n + 2:
+        # 健保碼末兩碼為包裝／規格碼；部分生物製劑會包含英文字母
+        # （例如 KC010892B5），因此只用開頭連續數字產生許可證索引鍵。
+        if len(body) >= n + 2 and len(digits) >= n:
             sub = digits[:n]
             keys.add(sub)
             keys.add(sub.lstrip('0'))

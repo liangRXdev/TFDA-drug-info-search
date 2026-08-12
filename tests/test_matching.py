@@ -57,6 +57,12 @@ def test_nhi_code_to_keys_includes_leading_zero_variants():
     assert "04004" in keys and "4004" in keys
 
 
+def test_nhi_code_to_keys_accepts_alphanumeric_package_suffix():
+    keys = nhi_code_to_keys("KC010892B5")
+    assert "01089" in keys and "1089" in keys
+    assert fda_lic_to_keys("衛部菌疫輸字第001089號") & keys == {"1089"}
+
+
 @pytest.mark.parametrize("code", [
     None,
     "",
@@ -66,6 +72,10 @@ def test_nhi_code_to_keys_includes_leading_zero_variants():
 ])
 def test_nhi_code_to_keys_invalid_returns_empty(code):
     assert nhi_code_to_keys(code) == set()
+
+
+def test_nhi_code_to_keys_rejects_punctuation_in_suffix():
+    assert nhi_code_to_keys("KC01089-B5") == set()
 
 
 def test_nhi_code_to_keys_requires_minimum_length():
