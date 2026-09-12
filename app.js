@@ -290,7 +290,9 @@ function buildNhiCodesTable(matches, isGreen = false) {
     const textColor   = isGreen ? 'var(--green-text)' : 'var(--amber-text)';
     const hasPrice = matches.some(m => m.price);
     const hasAtc   = matches.some(m => m.atcCode);
-    const rows = matches.map(m => `
+    const rows = matches.map(m => {
+        const histUrl = priceHistoryUrl(m.code);
+        return `
         <tr>
             <td style="font-weight:600;font-family:monospace;white-space:nowrap;">
                 ${escapeHtml(m.code)}
@@ -300,8 +302,12 @@ function buildNhiCodesTable(matches, isGreen = false) {
             ${hasPrice ? `<td class="price-cell" style="color:${textColor};">${m.price ? escapeHtml(m.price) + ' 元' : '—'}</td>` : ''}
             ${hasAtc   ? `<td>${m.atcCode ? `<span class="atc-badge">${escapeHtml(m.atcCode)}</span>` : '—'}</td>` : ''}
             <td style="font-size:.78rem;color:${textColor};">${m.chapter ? escapeHtml(m.chapter) : '—'}</td>
-        </tr>
-    `).join('');
+            <td style="white-space:nowrap;">${histUrl
+                ? `<a href="${escapeHtml(histUrl)}" target="_blank" rel="noopener noreferrer" class="inline-link price-hist-link"
+                     aria-label="查看 ${escapeHtml(m.code)} 的健保藥價歷史">查看 ↗</a>`
+                : '—'}</td>
+        </tr>`;
+    }).join('');
     return `
         <div class="nhi-table-wrap">
         <table class="nhi-codes-table" style="border-color:${borderColor};">
@@ -310,6 +316,7 @@ function buildNhiCodesTable(matches, isGreen = false) {
                 ${hasPrice ? '<th>支付價</th>' : ''}
                 ${hasAtc   ? '<th>ATC</th>' : ''}
                 <th>章節</th>
+                <th title="健保支付價的完整歷史（另一個網站：NHI-drug-price-history）">健保藥價歷史</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>
@@ -543,6 +550,19 @@ function safeUrl(raw) {
     const h = u.hostname;
     const ok = ALLOWED_URL_DOMAINS.some(d => h === d || h.endsWith('.' + d));
     return ok ? u.href : '';
+}
+
+// ── 健保藥價歷史連結（NHI-drug-price-history，Phase 3）─────────────
+// 目標為自家網站、網址前綴寫死，不是上游資料提供的 URL，故不放寬 safeUrl() 的官方網域白名單。
+// 代號須為 10 碼英數（健保藥品代號格式）才產生連結：資料若被污染，最多是不出現連結，
+// 不會把任意字串帶進 href。
+const PRICE_HISTORY_BASE = 'https://liangrxdev.github.io/NHI-drug-price-history/';
+const NHI_CODE_RE = /^[A-Za-z0-9]{10}$/;
+
+function priceHistoryUrl(code) {
+    const c = String(code || '').trim();
+    if (!NHI_CODE_RE.test(c)) return '';
+    return `${PRICE_HISTORY_BASE}?code=${encodeURIComponent(c.toUpperCase())}`;
 }
 
 // ── Autosuggest ───────────────────────────────────────────────

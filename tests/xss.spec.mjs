@@ -88,6 +88,37 @@ describe('safeUrl', () => {
   });
 });
 
+// ── 健保藥價歷史連結（Phase 3）──────────────────────────────────
+describe('priceHistoryUrl', () => {
+  const BASE = 'https://liangrxdev.github.io/NHI-drug-price-history/?code=';
+
+  test('10 碼英數代號 → 寫死前綴＋大寫代號', () => {
+    assert.equal(win.priceHistoryUrl('AC48092100'), `${BASE}AC48092100`);
+    assert.equal(win.priceHistoryUrl(' ac48092100 '), `${BASE}AC48092100`);
+  });
+
+  test('非 10 碼英數一律不產生連結', () => {
+    for (const bad of ['', null, undefined, 'AC4809210', 'AC480921000', `'); alert(1); //`,
+      'AC48092100&x=1', 'AC48092 00', 'javascript:x', 'ＡＣ48092100']) {
+      assert.equal(win.priceHistoryUrl(bad), '', String(bad));
+    }
+  });
+
+  test('健保代號表每列帶藥價歷史連結，另開新分頁且不帶 opener', () => {
+    const div = win.document.createElement('div');
+    div.innerHTML = win.buildNhiCodesTable([
+      { code: 'AC48092100', enName: 'CAREMOD', price: '10.1', chapter: '' },
+      { code: 'BAD', enName: 'X', price: '', chapter: '' },
+    ]);
+    const links = [...div.querySelectorAll('a.price-hist-link')];
+    assert.equal(links.length, 1);
+    assert.equal(links[0].getAttribute('href'), `${BASE}AC48092100`);
+    assert.equal(links[0].getAttribute('target'), '_blank');
+    assert.match(links[0].getAttribute('rel'), /noopener/);
+    assert.equal(div.querySelectorAll('thead th').length, div.querySelector('tbody tr').children.length);
+  });
+});
+
 // ── escapeHtml / highlight（C8 / T8）─────────────────────────
 describe('escapeHtml', () => {
   test('跳脫所有 HTML 敏感字元', () => {
@@ -180,15 +211,20 @@ describe('buildCard 對惡意資料的防護', () => {
     }
   });
 
-  test('所有 href 均為 https 且屬官方網域', () => {
+  test('所有 href 均為 https 且屬官方網域（或寫死的健保藥價歷史網址）', () => {
     const links = [...card.querySelectorAll('a[href]')];
     for (const a of links) {
       const href = a.getAttribute('href');
       assert.ok(
-        /^https:\/\/[^/]*\.(fda|nhi)\.gov\.tw\//.test(href),
+        /^https:\/\/[^/]*\.(fda|nhi)\.gov\.tw\//.test(href)
+          || /^https:\/\/liangrxdev\.github\.io\/NHI-drug-price-history\/\?code=[A-Z0-9]{10}$/.test(href),
         `不合法的 href：${href}`
       );
     }
+  });
+
+  test('惡意健保代號不產生藥價歷史連結', () => {
+    assert.equal(card.querySelectorAll('a.price-hist-link').length, 0);
   });
 
   test('危險 URL 被整個捨棄而非渲染成壞連結', () => {

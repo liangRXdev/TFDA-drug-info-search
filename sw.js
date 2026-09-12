@@ -1,7 +1,11 @@
-const STATIC_CACHE = 'tfda-static-v5';   // index.html／app.js 有異動時須同步提升（見 README）
+const STATIC_CACHE = 'tfda-static-v6';   // index.html／app.js 有異動時須同步提升（見 README）
 const DATA_CACHE   = 'tfda-data-v2';
 const FONT_CACHE   = 'tfda-fonts-v2';
 const ALL_CACHES   = [STATIC_CACHE, DATA_CACHE, FONT_CACHE];
+// GitHub Pages 專案頁共用 origin（liangrxdev.github.io），Cache Storage 不依 SW scope 隔離：
+// 清舊版只能刪本站三個快取家族，否則會清掉同網域其他工具（如 NHI 藥價歷史）的離線快取。
+// 用完整家族前綴而非 'tfda-'：TFDA-drug-id-quiz 的快取也以 'tfda-' 開頭。
+const OWN_PREFIXES = ['tfda-static-', 'tfda-data-', 'tfda-fonts-'];
 
 // ── Install：只快取輕量靜態資源，不預取 drugs_data.json ─────────────
 self.addEventListener('install', event => {
@@ -17,7 +21,8 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys.filter(k => !ALL_CACHES.includes(k)).map(k => caches.delete(k))
+        keys.filter(k => OWN_PREFIXES.some(p => k.startsWith(p)) && !ALL_CACHES.includes(k))
+            .map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );

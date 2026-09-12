@@ -24,13 +24,16 @@
 1. **新增靜態檔 → 必須同步加入 `sw.js` 的 install 預快取清單**，否則離線時整站壞掉。
    CI 有關卡擋（`test.yml:63` 逐一 grep `index.html` / `app.js` / `manifest.json`）——**新增第四個檔案時，記得把它一併加進那個 for 迴圈**，否則關卡形同虛設。
 
-2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v5`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
+2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v6`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
+   **清舊快取只刪自家三個家族前綴**（`OWN_PREFIXES`）：`liangrxdev.github.io` 由所有專案頁共用 origin，Cache Storage 不依 SW scope 隔離，`!ALL_CACHES.includes(k)` 會刪光同網域其他工具的快取（2026-09-12 修正）。不要縮成 `'tfda-'`——TFDA-drug-id-quiz 的快取也以它開頭。
 
 3. **CSP 是 `<meta>` 標籤不是 `_headers`**。`script-src 'self'` 意味著**不能寫 inline `<script>` 或 inline event handler**（`onclick=` 等）——JS 一律進 `app.js`。這裡不需要算 hash（那是 pharmacy-portal 的做法）。
 
 ## 前端連結白名單
 
 所有外部連結一律經 `safeUrl()`：限 `https` + `fda.gov.tw` / `nhi.gov.tw` 網域後綴。**未通過即不渲染**，不留下可點擊的壞連結。新增資料來源網域要同時改 `safeUrl()` 白名單與 CSP。
+
+唯一例外：健保代號表的「健保藥價歷史 → 查看 ↗」（`priceHistoryUrl()`，2026-09-12 Phase 3）。目標是自家站 `https://liangrxdev.github.io/NHI-drug-price-history/?code=`，**前綴寫死**、代號須為 10 碼英數才產生連結——不是上游資料提供的 URL，所以**不要**為它放寬 `safeUrl()` 白名單。
 
 ## build_data.py 的刻意設計（勿收緊）
 
