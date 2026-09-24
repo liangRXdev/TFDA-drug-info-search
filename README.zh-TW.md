@@ -56,22 +56,14 @@ cd TFDA-drug-info-search
 
 ### 2. 資料處理層開發 (Python)
 
-建議使用虛擬環境隔離依賴套件：
+需要 [uv](https://docs.astral.sh/uv/)。依賴由 `uv` 依 requirements 檔即時取用，毋須手動建立或啟動虛擬環境：
 
 ```bash
-# 建立並啟動虛擬環境 (Windows)
-python -m venv venv
-venv\Scripts\activate
-
-# 建立並啟動虛擬環境 (macOS/Linux)
-python3 -m venv venv
-source venv/bin/activate
-
-# 安裝依賴套件
-pip install -r requirements.txt
-
 # 執行資料更新腳本，生成最新 drugs_data.json
-python build_data.py
+uv run --with-requirements requirements.txt python build_data.py
+
+# 執行測試（requirements-dev.txt 含 pytest）
+uv run --with-requirements requirements-dev.txt python -m pytest tests/ -q
 ```
 
 ### 3. 前端展示層開發 (UI)
@@ -80,7 +72,7 @@ python build_data.py
 
 ```bash
 # 使用 Python 內建 HTTP 伺服器
-python -m http.server 8000
+uv run python -m http.server 8000
 ```
 
 完成後，於瀏覽器造訪 `http://localhost:8000` 即可預覽介面與測試搜尋功能。

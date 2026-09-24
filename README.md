@@ -56,22 +56,14 @@ cd TFDA-drug-info-search
 
 ### 2. Data layer (Python)
 
-A virtual environment is recommended to isolate dependencies:
+Requires [uv](https://docs.astral.sh/uv/). `uv` resolves dependencies on the fly from the requirements files, so there is no need to create or activate a virtual environment manually:
 
 ```bash
-# Create and activate a virtual environment (Windows)
-python -m venv venv
-venv\Scripts\activate
-
-# Create and activate a virtual environment (macOS/Linux)
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
 # Run the data update script to produce the latest drugs_data.json
-python build_data.py
+uv run --with-requirements requirements.txt python build_data.py
+
+# Run the tests (requirements-dev.txt includes pytest)
+uv run --with-requirements requirements-dev.txt python -m pytest tests/ -q
 ```
 
 ### 3. Frontend (UI)
@@ -80,7 +72,7 @@ Modern browsers restrict the local `file://` protocol (`fetch()` can't read loca
 
 ```bash
 # Python's built-in HTTP server
-python -m http.server 8000
+uv run python -m http.server 8000
 ```
 
 Then open `http://localhost:8000` in a browser to preview the UI and test search.
