@@ -1,4 +1,6 @@
-# TFDA 藥品資訊查詢系統 (TFDA Drug Info Search)
+# TFDA Drug Info Search (TFDA 藥品資訊查詢系統)
+
+**English** | [繁體中文](README.zh-TW.md)
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Click%20Here-2563eb?style=flat-square)](https://liangrxdev.github.io/TFDA-drug-info-search/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
@@ -7,111 +9,110 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-3776ab.svg?style=flat-square&logo=python&logoColor=white)]()
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF.svg?style=flat-square&logo=github-actions&logoColor=white)]()
 
-## 系統架構結論
+## Architecture Summary
 
-本專案為無伺服器 (Serverless) 之純靜態網頁應用程式 (SPA)。核心機制為透過 GitHub Actions 定期觸發 Python 資料處理腳本，自食藥署 (TFDA) 介接原始開放資料，進行預先清洗 (Pre-fetch & Cleansing) 並生成輕量化靜態 JSON 快取檔。此架構徹底解決了直接於前端請求政府 API 所面臨的 CORS 限制、高網路延遲及瀏覽器記憶體溢出 (OOM) 等物理限制，實現毫秒級的客戶端檢索效能。
+A serverless, purely static single-page application (SPA). GitHub Actions periodically runs a Python data-processing script that pulls raw open data from the Taiwan Food and Drug Administration (TFDA), pre-fetches and cleanses it, and generates a lightweight static JSON cache. This architecture removes the physical limits of calling government APIs directly from the frontend — CORS restrictions, high network latency and browser out-of-memory (OOM) — and delivers millisecond-level client-side search. The interface is in Traditional Chinese.
 
-## 前端介面特色 (Frontend Features)
+## Frontend Features
 
-針對臨床醫療人員與一般民眾的查詢痛點，本專案前端具備以下工程與體驗優勢：
+Designed around the lookup pain points of clinical staff and the public, the frontend offers these engineering and UX advantages:
 
-* 🚀 **毫秒級檢索效能 (In-Memory Search)：** 放棄傳統 API 往返查詢。當使用者載入網頁時，輕量化 JSON 已快取至本地，所有中英文模糊搜尋皆在記憶體內瞬間完成，達成「所打即所得」的零延遲體驗。
-* 🔎 **品名／成分雙軌搜尋 (Search Scope)：** 除中英文品名外，可切換以**成分**檢索，直接比對原始 `ingredients` 欄位，故 `AMLODIPINE` 亦可命中 `AMLODIPINE (AS BESYLATE)`。此舉可涵蓋品名不含成分字串的商品名（如「脈優」），成分檢索之結果集顯著大於品名檢索。預設維持「品名」範圍，避免如 ACETAMINOPHEN 等常見成分之複方製劑稀釋品名查詢結果。
-* 💡 **搜尋建議 (Autosuggest)：** 輸入 2 字以上即時提示，分「成分／品名」兩區並標示成分對應之品項筆數，支援鍵盤上下鍵選取。索引於資料載入後建立一次（現況約 3.7K 個相異成分、42K 個品名；此規模隨每週資料更新浮動，實際筆數以 `data_version.json` 為準）。成分建議於「品名」範圍下亦會出現，作為切換範圍之捷徑，點選後範圍鈕同步變更，不靜默改動結果集。
-* ⚡ **極輕量化 (Zero Dependencies)：** 捨棄沈重的現代化框架 (如 React/Vue)，採用純 Vanilla JS 與原生 DOM 操作實作。核心渲染引擎極小化，顯著降低首次可互動時間 (Time to Interactive, TTI)。
-* 📱 **響應式卡片設計 (Responsive UI)：** 採用 Mobile-first 策略開發，將龐雜的仿單資料轉化為結構化的「藥品資訊卡 (Drug Cards)」。無論於行動裝置或護理站桌機，皆能提供清晰的適應症、成分與用法用量閱讀體驗。
-* 🔗 **跨資料集深度整合：** 介面層自動將「藥品許可證」、「原廠仿單連結 (PDF)」與「健保給付規定」等跨部會孤島資料進行視覺化綁定，大幅降低臨床藥師或醫師的資訊檢索成本。
+* 🚀 **Millisecond search (in-memory):** No API round trips. When the page loads, the lightweight JSON is cached locally, and all Chinese/English fuzzy searches complete instantly in memory — results appear as you type, with zero latency.
+* 🔎 **Name / ingredient search scope:** Besides Chinese and English product names, you can switch to searching by **ingredient**, matched directly against the raw `ingredients` field, so `AMLODIPINE` also matches `AMLODIPINE (AS BESYLATE)`. This covers brand names that don't contain the ingredient string (e.g. 「脈優」), and ingredient search returns a notably larger result set than name search. The default stays on "name" so that combination products of common ingredients such as ACETAMINOPHEN don't dilute name results.
+* 💡 **Autosuggest:** Suggestions appear after 2+ characters, split into "ingredient / name" sections, with the number of products per ingredient, and support arrow-key selection. The index is built once after data loads (currently about 3.7K distinct ingredients and 42K names; the scale changes with the weekly data update, and `data_version.json` holds the actual counts). Ingredient suggestions also appear under the "name" scope as a shortcut to switch scope; choosing one updates the scope button, so the result set is never changed silently.
+* ⚡ **Ultra-light (zero dependencies):** No heavy modern framework (React/Vue); plain vanilla JS and native DOM operations. The rendering core is minimal, significantly lowering time to interactive (TTI).
+* 📱 **Responsive card design:** Built mobile-first, turning sprawling package-insert data into structured "drug cards". Indications, ingredients and dosage are clear to read on a phone or a nursing-station desktop.
+* 🔗 **Cross-dataset integration:** The UI automatically links data siloed across agencies — drug licenses, original package insert links (PDF) and NHI reimbursement rules — greatly reducing lookup effort for clinical pharmacists and physicians.
 
-## 客觀數據：系統技術棧與模組
+## Facts: Tech Stack and Modules
 
-| 模組屬性 | 技術實作 | 功能描述 |
+| Module | Implementation | Description |
 | :--- | :--- | :--- |
-| **前端展示層 (Frontend)** | HTML5, Vanilla JavaScript, CSS3 | 採事件驅動，依賴本地/CDN 快取之 `drugs_data.json` 進行記憶體內 (In-memory) 模糊搜尋與 DOM 渲染。 |
-| **資料擷取層 (ETL)** | Python 3.x (`build_data.py`) | 負責串接 TFDA 開放資料 API (許可證、仿單等)，執行欄位過濾、合併與結構正規化。 |
-| **自動化排程 (CI/CD)** | GitHub Actions | 透過 `.github/workflows` 內的 YAML 定義 Cron Job，定期執行 ETL 腳本並將變更自動 Commit 至儲存庫。 |
-| **主機與網路 (Hosting)** | GitHub Pages | 負責靜態檔案派發 (CDN)，提供具備高可用性之 HTTPS 存取端點。 |
+| **Frontend** | HTML5, vanilla JavaScript, CSS3 | Event-driven; performs in-memory fuzzy search and DOM rendering over `drugs_data.json` cached locally / via CDN. |
+| **Data extraction (ETL)** | Python 3.x (`build_data.py`) | Connects to TFDA open data APIs (licenses, package inserts, etc.), filters and merges fields, and normalizes structure. |
+| **Automation (CI/CD)** | GitHub Actions | A cron job defined in YAML under `.github/workflows` periodically runs the ETL script and auto-commits changes to the repository. |
+| **Hosting** | GitHub Pages | Serves the static files (CDN) with a highly available HTTPS endpoint. |
 
-## 資料處理流程步驟 (Data Pipeline)
+## Data Pipeline
 
-系統資料更新遵循以下自動化流程：
-1. **排程觸發 (Trigger)：** GitHub Actions 依設定之 Cron 頻率（例如每月）啟動虛擬環境。
-2. **依賴安裝 (Setup)：** 讀取 `requirements.txt` 安裝必要之 Python 模組。
-3. **資料拉取 (Fetch)：** `build_data.py` 向 TFDA 伺服器發出 HTTP GET 請求，下載原始大型 JSON 資料集。
-4. **資料清洗 (Cleanse)：** 移除前端展示無需之冗餘欄位，將資料體積極小化，並建立以「許可證字號」為關聯鍵之整合結構。
-5. **靜態生成 (Build)：** 輸出精簡版之 `drugs_data.json` 覆寫原檔案。
-6. **版控推播 (Deploy)：** GitHub Actions 自動將更新後的 JSON 檔 Commit 並 Push 至 Main 分支，觸發 GitHub Pages 更新。
+Data updates follow this automated flow:
+1. **Trigger:** GitHub Actions starts a runner on the configured cron schedule (e.g. monthly).
+2. **Setup:** Installs the required Python modules from `requirements.txt`.
+3. **Fetch:** `build_data.py` sends HTTP GET requests to the TFDA server and downloads the large raw JSON datasets.
+4. **Cleanse:** Removes fields the frontend doesn't need to minimize size, and builds an integrated structure keyed on the license number.
+5. **Build:** Writes the slimmed `drugs_data.json`, overwriting the old file.
+6. **Deploy:** GitHub Actions commits and pushes the updated JSON to the main branch, triggering a GitHub Pages update.
 
-## 本地開發與環境建置步驟
+## Local Development
 
-若需於本地環境進行除錯或開發，請依循以下步驟：
+To debug or develop locally:
 
-### 1. 取得專案原始碼
+### 1. Get the source
 
 ```bash
 git clone https://github.com/liangRXdev/TFDA-drug-info-search.git
 cd TFDA-drug-info-search
 ```
 
-### 2. 資料處理層開發 (Python)
+### 2. Data layer (Python)
 
-建議使用虛擬環境隔離依賴套件：
+A virtual environment is recommended to isolate dependencies:
 
 ```bash
-# 建立並啟動虛擬環境 (Windows)
+# Create and activate a virtual environment (Windows)
 python -m venv venv
 venv\Scripts\activate
 
-# 建立並啟動虛擬環境 (macOS/Linux)
+# Create and activate a virtual environment (macOS/Linux)
 python3 -m venv venv
 source venv/bin/activate
 
-# 安裝依賴套件
+# Install dependencies
 pip install -r requirements.txt
 
-# 執行資料更新腳本，生成最新 drugs_data.json
+# Run the data update script to produce the latest drugs_data.json
 python build_data.py
 ```
 
-### 3. 前端展示層開發 (UI)
+### 3. Frontend (UI)
 
-因現代瀏覽器對於本地 `file://` 協定存在安全性限制（無法執行 `fetch()` 讀取本地 JSON），必須透過本地伺服器啟動：
+Modern browsers restrict the local `file://` protocol (`fetch()` can't read local JSON), so serve it through a local server:
 
 ```bash
-# 使用 Python 內建 HTTP 伺服器
+# Python's built-in HTTP server
 python -m http.server 8000
 ```
 
-完成後，於瀏覽器造訪 `http://localhost:8000` 即可預覽介面與測試搜尋功能。
+Then open `http://localhost:8000` in a browser to preview the UI and test search.
 
-## 邏輯漏洞與維護注意事項
+## Pitfalls and Maintenance Notes
 
-* **檔案體積監控：** 監控對象應為 **gzip 壓縮後之傳輸量**，而非磁碟上的原始檔案大小——GitHub Pages 預設啟用 gzip，兩者差距約 4.5 倍。截至 2026-07，原始檔 37.7MB、實際傳輸 **8.3MB**。建議以傳輸量 10MB 為警戒線。
+* **File size monitoring:** Monitor the **gzip-compressed transfer size**, not the raw file size on disk — GitHub Pages enables gzip by default, and the two differ by about 4.5×. As of 2026-07, the raw file is 37.7 MB and the actual transfer is **8.3 MB**. A 10 MB transfer size is the suggested alert line.
 
-  以下為本機實測（8 核 / 16GB，Chrome）之各階段成本，可見**運算並非瓶頸，網路傳輸才是**：
+  Local measurements (8 cores / 16 GB, Chrome) of each stage show that **computation isn't the bottleneck; network transfer is**:
 
-  | 階段 | 耗時 |
+  | Stage | Time |
   | :--- | ---: |
-  | `JSON.parse`（37.7MB） | 102 ms |
-  | 建立搜尋索引 | 163 ms |
-  | 單次成分搜尋（953 筆命中） | 9 ms |
-  | autosuggest 掃描（42K 品名） | 2 ms |
+  | `JSON.parse` (37.7 MB) | 102 ms |
+  | Build search index | 163 ms |
+  | Single ingredient search (953 hits) | 9 ms |
+  | Autosuggest scan (42K names) | 2 ms |
 
-  JS heap 峰值約 138MB（桌機上限 4192MB，無虞）。**低階行動裝置之 heap 上限遠低於此，尚未實測**，若日後回報行動端崩潰，應優先從此處查起。
-* **API 端點穩定性：** `build_data.py` 依賴 TFDA 開放資料平台的 URL 結構與 JSON Key 命名。若政府端無預警更動 Schema，將導致 GitHub Actions 構建失敗，需隨時檢視 Action 執行日誌。
-* **成分欄僅有英文：** TFDA 原始資料之 `ingredients` 欄位為英文成分名（鹽類寫於括號內，多成分以 `;;` 分隔），**不含中文**。故成分範圍無法以「阿莫西林」等中文檢索（實測回傳 0 筆）。若需支援，須另建中英成分對照表，非前端可自行解決。資料覆蓋率：全體約 88.7% 有成分，健保品項則幾乎全數（僅個位數缺漏）。**總筆數與健保品項數請一律以 `data_version.json` 的 `totalRecords` / `nhiRecords` 為準**，該檔於每次建置時重寫；此處不寫死絕對筆數，以免隨每週更新而過期。
-* **資料快取策略 (SWR)：** `sw.js` 對 `drugs_data.json` 採 stale-while-revalidate——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（0 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
+  Peak JS heap is about 138 MB (desktop limit 4192 MB, no concern). **Low-end mobile devices have much lower heap limits, and this hasn't been measured**; if mobile crashes are ever reported, start looking here.
+* **API endpoint stability:** `build_data.py` depends on the TFDA open-data platform's URL structure and JSON key names. If the government side changes the schema without notice, the GitHub Actions build will fail; keep an eye on the Action logs.
+* **Ingredient field is English only:** The raw TFDA `ingredients` field holds English ingredient names (salts in parentheses, multiple ingredients separated by `;;`), **with no Chinese**. So the ingredient scope can't search Chinese names such as 「阿莫西林」 (amoxicillin) (measured: 0 results). Supporting that would need a separate Chinese–English ingredient mapping table, which the frontend can't solve alone. Coverage: about 88.7% of all records have ingredients, and nearly all NHI items do (only a handful missing). **Always take total and NHI record counts from `totalRecords` / `nhiRecords` in `data_version.json`**, which is rewritten on every build; absolute counts aren't hard-coded here so they don't go stale with weekly updates.
+* **Data caching strategy (SWR):** `sw.js` uses stale-while-revalidate for `drugs_data.json` — the cached copy is returned first so the page is usable immediately, and a background conditional request with `If-None-Match` checks for a new version. Data updates weekly, so when unchanged the response is just a 304 (0 bytes), with no need to refetch 8.3 MB. **If you change this strategy, never fall back to network-first**: that would redownload the whole dataset every time the app opens. When a new version arrives, a green banner prompts the user to reload; it doesn't auto-reload, to avoid interrupting a search in progress.
 
-  註：Service Worker 於**首次**造訪時是在 `drugs_data.json` 請求發出後才完成註冊，故攔截不到該次請求、亦無從快取。**第 2 次**造訪才由 SW 接手並寫入快取，**第 3 次**起才進入 304 穩態。測試快取行為時若只重載一次會誤判為失效。
-* **Service Worker 快取版本：** 修改 `index.html` 或 `app.js` 後**建議**同步提升 `sw.js` 之 `STATIC_CACHE` 版本號，但理由與直覺相反：
+  Note: on the **first** visit the service worker finishes registering only after the `drugs_data.json` request has been sent, so it can't intercept or cache that request. The SW takes over and writes the cache on the **2nd** visit, and the 304 steady state starts from the **3rd**. When testing caching, a single reload will make it look broken.
+* **Service worker cache version:** After changing `index.html` or `app.js` it is **recommended** to bump `STATIC_CACHE` in `sw.js`, but for a counter-intuitive reason:
 
-  | 情境 | 不升版號 | 升版號 |
+  | Situation | Without bump | With bump |
   | :--- | :--- | :--- |
-  | 線上使用者看到的頁面 | ✅ 新版 | ✅ 新版 |
-  | 離線快取中的頁面 | ⚠️ 見下方說明 | ✅ 新版 |
+  | Page seen by online users | ✅ new | ✅ new |
+  | Page in the offline cache | ⚠️ see below | ✅ new |
 
-  `index.html` 與 `app.js` 走 **network-first**（見 `sw.js` 末段），故**線上使用者一律取得最新頁面，與版本號無關**——升版號並非新功能生效的前提。真正的作用是刷新**離線副本**。
+  `index.html` and `app.js` are **network-first** (see the end of `sw.js`), so **online users always get the latest page regardless of the version number** — bumping isn't a precondition for new features to take effect. What it really does is refresh the **offline copy**.
 
-  > **⚠️ 此處行為已於 2026-07-20 變更，尚未重新實測。** 先前的實測結論是：network-first 分支中的 `cache.put` 為 fire-and-forget（未受 `waitUntil` 保護），SW 事件結束即遭丟棄，故離線副本**不會**更新，唯有升版號觸發 `install` 的 `addAll` 才會刷新。該缺陷已修正（`cache.put` 現已納入 `event.waitUntil`），理論上離線副本應能在一般瀏覽中自行更新，但**上表「不升版號」一欄的新行為尚未經實測驗證**，暫時維持升版號的建議。
+  > **⚠️ This behavior changed on 2026-07-20 and has not been re-measured.** The earlier measured conclusion was: `cache.put` in the network-first branch was fire-and-forget (not protected by `waitUntil`) and was discarded when the SW event ended, so the offline copy was **not** updated; only a version bump triggering `addAll` in `install` refreshed it. That defect has been fixed (`cache.put` is now inside `event.waitUntil`), so in theory the offline copy should update during normal browsing, but **the new behavior in the "without bump" column has not been verified by measurement**, so the recommendation to bump stays for now.
   >
-  > 另注意：`install` 的 `addAll` 預快取清單現含 `./app.js`，**新增靜態檔案時務必同步加入該清單**，否則離線時會缺檔而整站無法運作。
-
+  > Also note: the `install` `addAll` precache list now includes `./app.js`. **When adding static files, always add them to that list too**, or the site will be missing files offline and stop working.
