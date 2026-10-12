@@ -142,3 +142,38 @@ def test_lookup_empty_input_returns_empty(raw):
 def test_lookup_with_empty_chapter_dict_returns_empty():
     """PDF 解析失敗時 chapters 為空，查找須安全退化而非拋錯"""
     assert lookup_chapter("2.6.1", {}) == []
+
+
+# ── 縮排的子章節標題（pdftotext -layout 保留縮排；115.9.22 版漏抓 44 章）──
+INDENTED = """9.1.Aromatase Inhibitors
+ 9.1.1.Exemestane(如 Aromasin)：（88/11/1）
+限用於停經後乳癌。
+ 9.1.2.Anastrozole(如 Arimidex)：
+限用於停經後婦女。
+8.2.免疫調節劑 Immunomodulators
+   8.2.9.Thalidomide（如 Thado）(100/2/1)
+限用於多發性骨髓瘤。
+   0.5 mg/kg 每日一次
+   2.3 次/日
+"""
+
+
+def test_indented_subchapter_headings_are_parsed():
+    ch = parse_chapters(INDENTED)
+    assert {"9.1", "9.1.1", "9.1.2", "8.2", "8.2.9"} <= set(ch)
+    assert ch["8.2.9"]["title"].startswith("Thalidomide")
+
+
+def test_indented_subchapter_splits_parent_content():
+    """修正前子章節內容會整段溢入父章節"""
+    ch = parse_chapters(INDENTED)
+    assert "Exemestane" not in ch["9.1"]["content"]
+    assert "停經後乳癌" in ch["9.1.1"]["content"]
+    assert "停經後婦女" not in ch["9.1.1"]["content"]
+
+
+def test_indented_dose_numbers_are_not_chapters():
+    """縮排行須「編號.」後緊接文字才算標題，劑量數字不得成為章節"""
+    ch = parse_chapters(INDENTED)
+    assert "0.5" not in ch and "2.3" not in ch
+    assert "0.5 mg/kg" in ch["8.2.9"]["content"]

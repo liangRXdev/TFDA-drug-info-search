@@ -206,7 +206,7 @@ def fetch_nhi_chapters():
         with tempfile.TemporaryDirectory() as tmpdir:
             txt_path = os.path.join(tmpdir, "extracted.txt")
             result = subprocess.run(
-                ["pdftotext", "-layout", LOCAL_PDF_PATH, txt_path],
+                ["pdftotext", "-enc", "UTF-8", "-layout", LOCAL_PDF_PATH, txt_path],
                 capture_output=True, timeout=120
             )
             if result.returncode != 0:
@@ -233,16 +233,23 @@ def parse_chapters(text: str) -> dict:
     text = re.sub(r'\n\s*\f\s*', '\n', text)
     text = re.sub(r'\n\s*\d{1,4}\s*\n', '\n', text)
 
-    chapter_re = re.compile(r'^(\d{1,2}(?:\.\d{1,3}){1,4}\.?)\s*(.+?)$', re.MULTILINE)
+    # 第二分支：pdftotext -layout 會保留縮排，子章節常以「   8.2.9.Thalidomide」出現，
+    # 只認行首會漏抓（115.9.22 版漏 44 個章節，致 36 個品項查無規定，且父章節內容
+    # 溢入子章節）。縮排行要求「編號.」後緊接非空白非數字，避免把「   0.5 mg/kg」
+    # 這類劑量數字誤判為章節。
+    chapter_re = re.compile(
+        r'^(?:(\d{1,2}(?:\.\d{1,3}){1,4}\.?)\s*(.+?)'
+        r'|[ \t]+(\d{1,2}(?:\.\d{1,3}){1,4})\.(?=[^\s\d.])(.+?))$',
+        re.MULTILINE)
     matches = []
     for m in chapter_re.finditer(text):
-        num = m.group(1).rstrip('.')
+        num = (m.group(1) or m.group(3)).rstrip('.')
         parts = num.split('.')
         if not all(p.isdigit() for p in parts):
             continue
         if int(parts[0]) > 20:
             continue
-        matches.append((m.start(), num, m.group(2).strip()))
+        matches.append((m.start(), num, (m.group(2) or m.group(4)).strip()))
 
     chapters = {}
     for i, (start, num, title) in enumerate(matches):
