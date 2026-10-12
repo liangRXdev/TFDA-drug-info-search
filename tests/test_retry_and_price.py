@@ -9,6 +9,7 @@
 import pytest
 import requests
 
+import build_data
 from build_data import is_retryable, price_is_malformed, price_value, detect_field
 
 
@@ -111,3 +112,42 @@ def test_single_fuzzy_candidate_is_silent(capsys):
     rows = [{"健保藥品代號": "A"}]
     assert detect_field(rows, "藥品代號") == "健保藥品代號"
     assert capsys.readouterr().err == ""
+
+
+# ── download() 退避排程：NHI 拉長、TFDA 維持原狀 ──────────────────
+def _always_disconnect(monkeypatch):
+    sleeps = []
+    def fake_get(*a, **kw):
+        raise requests.ConnectionError("Remote end closed connection without response")
+    monkeypatch.setattr(build_data.requests, "get", fake_get)
+    monkeypatch.setattr(build_data.time, "sleep", sleeps.append)
+    return sleeps
+
+
+def test_nhi_csv_uses_longer_backoff(monkeypatch):
+    sleeps = _always_disconnect(monkeypatch)
+    assert build_data.fetch_nhi_csv("https://example.invalid/nhi", "NHI") == []
+    assert sleeps == [30, 60, 120, 240]          # 5 次嘗試、4 次等待，合計 7.5 分鐘
+
+
+def test_fda_json_keeps_default_backoff(monkeypatch):
+    sleeps = _always_disconnect(monkeypatch)
+    assert build_data.fetch_fda_json("https://example.invalid/37", "API 37") == []
+    assert sleeps == [5, 10]
+
+
+def test_nhi_recovers_after_transient_disconnects(monkeypatch):
+    calls = {"n": 0}
+    sleeps = []
+    class OkResp:
+        def raise_for_status(self): pass
+        def iter_content(self, chunk_size): yield "藥品代號,藥品英文名稱\nAC00001100,X\n".encode("utf-8")
+    def flaky_get(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise requests.ConnectionError("Remote end closed connection without response")
+        return OkResp()
+    monkeypatch.setattr(build_data.requests, "get", flaky_get)
+    monkeypatch.setattr(build_data.time, "sleep", sleeps.append)
+    records = build_data.fetch_nhi_csv("https://example.invalid/nhi", "NHI")
+    assert len(records) == 1 and sleeps == [30, 60]

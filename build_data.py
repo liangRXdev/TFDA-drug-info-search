@@ -64,6 +64,13 @@ MAX_BAD_DATE_RATIO = 0.01
 
 RETRY_BASE_SEC = 5   # 下載重試的退避基數（指數成長：5、10、20…）
 
+# 健保署 API 偶發「未回應即斷線」（RemoteDisconnected；2026-08-30、10-11 兩次
+# 使週建置中止，同次 TFDA 三個來源皆正常）。原本 3 次重試約 15 秒內用完，
+# 撐不過對方短暫中斷。僅對 NHI 拉長：等待 30、60、120、240 秒，合計 7.5 分鐘，
+# 仍在 job timeout（40 分）內。
+NHI_MAX_RETRIES    = 5
+NHI_RETRY_BASE_SEC = 30
+
 # 下載／解析階段預期會遇到的例外。刻意不catch Exception：
 # 例如 print() 的 UnicodeEncodeError 若被吞掉，會偽裝成「下載失敗」，
 # 使一個編碼問題看起來像四個網路問題（2026-07-20 實際踩過）。
@@ -87,7 +94,7 @@ INGREDIENT_NOISE = {
 # ────────────────────────────────────────────────────────────────
 
 
-def download(url, label, max_retries=3):
+def download(url, label, max_retries=3, retry_base_sec=RETRY_BASE_SEC):
     """下載並回傳 bytes。一律驗證 TLS 憑證——本資料供臨床查詢，
     傳輸遭竄改等同污染藥品資料，寧可建置失敗也不得降級。"""
     print(f"  ⬇  下載中：{label}")
@@ -111,7 +118,7 @@ def download(url, label, max_retries=3):
                 raise
             if attempt >= max_retries:
                 raise
-            wait = RETRY_BASE_SEC * (2 ** (attempt - 1))   # 指數退避
+            wait = retry_base_sec * (2 ** (attempt - 1))   # 指數退避
             print(f"     ⚠  第 {attempt} 次失敗，{wait} 秒後重試：{e}")
             time.sleep(wait)
 
@@ -162,7 +169,8 @@ def fetch_fda_json(url, label):
 
 def fetch_nhi_csv(url, label):
     try:
-        raw = download(url, label)
+        raw = download(url, label, max_retries=NHI_MAX_RETRIES,
+                       retry_base_sec=NHI_RETRY_BASE_SEC)
         text = smart_decode(raw)
         records = list(csv.DictReader(io.StringIO(text)))
         print(f"     ✓  CSV 解析成功，筆數：{len(records):,}")
