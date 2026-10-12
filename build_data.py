@@ -94,6 +94,34 @@ INGREDIENT_NOISE = {
 # ────────────────────────────────────────────────────────────────
 
 
+class IncompleteDownload(requests.RequestException):
+    """HTTP 200 但內容不完整（截斷、空檔、壞 zip）。無 response 屬性 → is_retryable 視為暫時性。"""
+
+
+def check_payload(data, resp):
+    """在重試迴圈內驗證內容完整性。2026-10-12 TFDA API 37 對 GitHub runner 連續回傳
+    PK 開頭但無法解壓的檔案（本機同時段正常），原本解壓在 download() 之後才做，
+    壞檔既不重試、log 也看不出收到了什麼。"""
+    headers = getattr(resp, "headers", None) or {}
+    ctype = headers.get("Content-Type", "")
+    clen = headers.get("Content-Length")
+    diag = (f"收到 {len(data):,} bytes，Content-Length={clen}，"
+            f"Content-Type={ctype or '-'}，開頭={data[:16]!r}")
+    if not data:
+        raise IncompleteDownload(f"空內容；{diag}")
+    # 有 Content-Encoding 時 iter_content 已解壓，長度本來就不會等於 Content-Length
+    if clen and clen.isdigit() and not headers.get("Content-Encoding") and int(clen) != len(data):
+        raise IncompleteDownload(f"長度不符；{diag}")
+    if data[:4] == b"PK\x03\x04" or "zip" in ctype.lower():
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                bad = zf.testzip()
+        except zipfile.BadZipFile as e:
+            raise IncompleteDownload(f"zip 無法開啟（{e}）；{diag}") from e
+        if bad is not None:
+            raise IncompleteDownload(f"zip 內 {bad} CRC 錯誤；{diag}")
+
+
 def download(url, label, max_retries=3, retry_base_sec=RETRY_BASE_SEC):
     """下載並回傳 bytes。一律驗證 TLS 憑證——本資料供臨床查詢，
     傳輸遭竄改等同污染藥品資料，寧可建置失敗也不得降級。"""
@@ -109,6 +137,7 @@ def download(url, label, max_retries=3, retry_base_sec=RETRY_BASE_SEC):
                                 headers=headers, stream=True)
             resp.raise_for_status()
             data = b''.join(resp.iter_content(chunk_size=1024 * 1024))  # 1 MB chunks
+            check_payload(data, resp)
             print(f"     ✓  下載完成（{len(data)/1e6:.2f} MB，{time.time()-start:.1f} 秒）")
             return data
         except requests.RequestException as e:

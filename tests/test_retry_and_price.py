@@ -151,3 +151,60 @@ def test_nhi_recovers_after_transient_disconnects(monkeypatch):
     monkeypatch.setattr(build_data.time, "sleep", sleeps.append)
     records = build_data.fetch_nhi_csv("https://example.invalid/nhi", "NHI")
     assert len(records) == 1 and sleeps == [30, 60]
+
+
+# ── check_payload：HTTP 200 但內容不完整須重試（2026-10-12 API 37 壞 zip）──
+import io
+import json
+import zipfile
+
+
+def _zip_bytes(obj):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("37_5.json", json.dumps(obj))
+    return buf.getvalue()
+
+
+class _Resp:
+    def __init__(self, data, headers=None):
+        self._data, self.headers = data, headers or {}
+    def raise_for_status(self): pass
+    def iter_content(self, chunk_size): yield self._data
+
+
+GOOD_ZIP = _zip_bytes([{"許可證字號": "衛署藥輸字第021571號"}])
+
+
+def test_valid_zip_passes():
+    build_data.check_payload(GOOD_ZIP, _Resp(GOOD_ZIP, {"Content-Type": "application/zip",
+                                                         "Content-Length": str(len(GOOD_ZIP))}))
+
+
+@pytest.mark.parametrize("data,headers,reason", [
+    (b"", {}, "空內容"),
+    (GOOD_ZIP[: len(GOOD_ZIP) // 2], {}, "zip 無法開啟"),
+    (GOOD_ZIP[:100], {"Content-Length": str(len(GOOD_ZIP))}, "長度不符"),
+    (b"<html>busy</html>", {"Content-Type": "application/zip"}, "zip 無法開啟"),
+])
+def test_incomplete_payload_raises_with_diagnostics(data, headers, reason):
+    with pytest.raises(build_data.IncompleteDownload) as ei:
+        build_data.check_payload(data, _Resp(data, headers))
+    msg = str(ei.value)
+    assert reason in msg and f"收到 {len(data):,} bytes" in msg, "log 須帶實收大小供判讀"
+    assert is_retryable(ei.value)
+
+
+def test_content_encoding_skips_length_check():
+    """gzip 傳輸時 iter_content 已解壓，長度與 Content-Length 不同屬正常"""
+    data = b'[{"a": 1}]'
+    build_data.check_payload(data, _Resp(data, {"Content-Length": "5", "Content-Encoding": "gzip"}))
+
+
+def test_truncated_zip_is_retried_then_recovers(monkeypatch):
+    responses = [_Resp(GOOD_ZIP[: len(GOOD_ZIP) // 2]), _Resp(GOOD_ZIP)]
+    sleeps = []
+    monkeypatch.setattr(build_data.requests, "get", lambda *a, **kw: responses.pop(0))
+    monkeypatch.setattr(build_data.time, "sleep", sleeps.append)
+    result = build_data.fetch_fda_json("https://example.invalid/37", "API 37")
+    assert len(result) == 1 and sleeps == [5]
