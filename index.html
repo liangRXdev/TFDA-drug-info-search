@@ -295,6 +295,14 @@ button.link-btn { line-height:inherit; }
     background:var(--gray-bg); color:var(--text-secondary); border:2px solid var(--gray-border);
 }
 .link-btn-gray:hover { background:var(--gray-border); color:white; }
+/* 同類連結過多時收合（外盒/標籤、外觀圖） */
+.link-group > summary { list-style:none; }
+.link-group > summary::-webkit-details-marker { display:none; }
+.link-group > summary::after { content:'▸'; font-size:.75rem; }
+.link-group[open] { flex-basis:100%; }
+.link-group[open] > summary::after { content:'▾'; }
+.link-group-list { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.625rem; }
+.link-group-list .link-btn { padding:.35rem .8rem; font-size:.8125rem; }
 
 .link-helper-tip {
     font-size:.78rem; color:var(--text-secondary);

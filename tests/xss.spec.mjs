@@ -243,3 +243,76 @@ describe('buildCard 對惡意資料的防護', () => {
     }
   });
 });
+
+// ── 仿單連結分類（依 URL 路徑，不依陣列位置）──────────────────────
+describe('classifyPackageLink / 仿單按鈕', () => {
+  const INSERT = 'https://mcp.fda.gov.tw/insert/pdfcasefile/i_00cfcf5c-d586-48c2-85b6-51133a59a9d1?c=2';
+  const LABEL  = 'https://mcp.fda.gov.tw/insert/lablefiles/35cefae3-8884-49ee-bb88-75e2088f146b_0?c=2';
+  const EXPORT = 'https://mcp.fda.gov.tw/exportpdf/%E5%85%A7%E8%A1%9B%E8%97%A5%E8%A3%BD%E5%AD%97%E7%AC%AC005347%E8%99%9F';
+  const OTHER  = 'https://mcp.fda.gov.tw/somewhere/else';
+
+  const labelsOf = (packageLinks) => {
+    const div = win.document.createElement('div');
+    div.innerHTML = win.buildCard({ licenseNumber: 'X', packageLinks }, '');
+    return [...div.querySelectorAll('a.link-btn-outline')].map(a => a.textContent.replace('📃', '').trim());
+  };
+
+  test('四種路徑各自分類', () => {
+    assert.equal(win.classifyPackageLink(INSERT).kind, 'insert');
+    assert.equal(win.classifyPackageLink(LABEL).kind, 'label');
+    assert.equal(win.classifyPackageLink(EXPORT).kind, 'export');
+    assert.equal(win.classifyPackageLink(OTHER).kind, 'other');
+    assert.equal(win.classifyPackageLink('javascript:alert(1)'), null);
+    assert.equal(win.classifyPackageLink(''), null);
+  });
+
+  test('只有外盒連結時標為「外盒/標籤」（回歸：舊版依位置誤標為仿單）', () => {
+    assert.deepEqual(labelsOf([LABEL]), ['外盒/標籤']);
+  });
+
+  test('仿單＋外盒', () => {
+    assert.deepEqual(labelsOf([INSERT, LABEL]), ['PDF 仿單', '外盒/標籤']);
+  });
+
+  test('exportpdf 不產生按鈕', () => {
+    assert.deepEqual(labelsOf([EXPORT, LABEL]), ['外盒/標籤']);
+    assert.deepEqual(labelsOf([EXPORT]), []);
+  });
+
+  const INSERT2 = INSERT.replace('00cfcf5c', '11cfcf5c');
+  const labelN = n => LABEL.replace('35cefae3', `35cefa${String(n).padStart(2, '0')}`);
+
+  test('同類多筆依序編號；未知路徑標為其他連結', () => {
+    assert.deepEqual(labelsOf([INSERT, INSERT2, OTHER]), ['PDF 仿單 1', 'PDF 仿單 2', '其他連結']);
+  });
+
+  test('「;」串接的多個網址拆開、去重，順序不變（回歸：舊版只能開到第一個）', () => {
+    assert.deepEqual([...win.splitLinks([`${INSERT};${INSERT2}`, ` ${INSERT} ;`, LABEL])], [INSERT, INSERT2, LABEL]);
+    assert.deepEqual(labelsOf([`${EXPORT};${LABEL}`]), ['外盒/標籤']);
+    assert.deepEqual([...win.splitLinks(null)], []);
+  });
+
+  test('外盒超過 2 張收進 details，連結一張不漏；仿單不收合', () => {
+    const div = win.document.createElement('div');
+    const labels = Array.from({ length: 5 }, (_, i) => labelN(i));
+    div.innerHTML = win.buildCard({ licenseNumber: 'X', packageLinks: [labels.join(';'), INSERT, INSERT2], imageLinks: [] }, '');
+    const group = div.querySelector('details.link-group');
+    assert.ok(group);
+    assert.match(group.querySelector('summary').textContent, /外盒\/標籤（5）/);
+    assert.equal(group.querySelectorAll('a').length, 5);
+    assert.equal(div.querySelectorAll('details.link-group').length, 1);
+    assert.equal([...div.querySelectorAll('a')].filter(a => a.textContent.includes('PDF 仿單')).length, 2);
+  });
+
+  test('外盒恰 2 張不收合', () => {
+    const div = win.document.createElement('div');
+    div.innerHTML = win.buildCard({ licenseNumber: 'X', packageLinks: [`${labelN(1)};${labelN(2)}`] }, '');
+    assert.equal(div.querySelectorAll('details').length, 0);
+    assert.equal(div.querySelectorAll('a.link-btn-outline').length, 2);
+  });
+
+  test('packageLinks 缺值不拋錯', () => {
+    assert.deepEqual(labelsOf(undefined), []);
+    assert.deepEqual(labelsOf(null), []);
+  });
+});

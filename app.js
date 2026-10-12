@@ -353,25 +353,21 @@ function buildCard(drug, keyword = '') {
             📄 電子仿單（新版）
         </a>` : '';
 
-    // 舊版仿單連結（API 39 的圖檔：index 0=仿單, index 1=外盒/標籤，部分 404）
-    const oldPkgBtns = (drug.packageLinks || []).map((url, i) => {
-        const href = safeUrl(url);
-        if (!href) return '';   // 未通過白名單即不渲染，不留下可點擊的壞連結
-        const label = i === 1 ? '外盒/標籤' : '舊版仿單';
-        return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="link-btn link-btn-outline">📃 ${label}</a>`;
-    }).join('');
+    // API 39 連結：拆「;」串接 → 依 URL 路徑分類（見 classifyPackageLink），部分 404
+    // 未通過白名單（null）或 exportpdf 即不渲染，不留下可點擊的壞連結
+    const pkgLinks = splitLinks(drug.packageLinks)
+        .map(classifyPackageLink)
+        .filter(l => l && l.kind !== 'export');
+    const hrefsOf = kind => pkgLinks.filter(l => l.kind === kind).map(l => l.href);
+    const oldPkgBtns =
+        linkButtons(hrefsOf('insert'), '📃', 'PDF 仿單', Infinity) +   // 仿單最多 6 份，逐一列出
+        linkButtons(hrefsOf('label'),  '📃', '外盒/標籤') +
+        linkButtons(hrefsOf('other'),  '📃', '其他連結');
 
     const pkgBtns = fdaPkgBtn + oldPkgBtns;
 
     // 外觀按鈕
-    const imgBtns = (drug.imageLinks || []).map((url, i) => {
-        const href = safeUrl(url);
-        if (!href) return '';
-        return `
-        <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="link-btn link-btn-outline">
-            🖼️ 外觀圖${drug.imageLinks.length > 1 ? ' '+(i+1) : ''}
-        </a>`;
-    }).join('');
+    const imgBtns = linkButtons(splitLinks(drug.imageLinks).map(safeUrl).filter(Boolean), '🖼️', '外觀圖');
 
     // 健保查詢按鈕（如果有匹配紀錄）
     const nhiQueryUrl = 'https://info.nhi.gov.tw/INAE3000/INAE3000S01';
@@ -563,6 +559,54 @@ function priceHistoryUrl(code) {
     const c = String(code || '').trim();
     if (!NHI_CODE_RE.test(c)) return '';
     return `${PRICE_HISTORY_BASE}?code=${encodeURIComponent(c.toUpperCase())}`;
+}
+
+// ── 仿單連結分類（API 39）──────────────────────────────────────
+// build_data.py 依序放入「仿單」「外盒」兩欄並略過空值，陣列位置因此不代表類型：
+// 只有外盒的品項（實測 1,914 筆）會被位置判斷標成「舊版仿單」。改依 URL 路徑判斷。
+// /exportpdf/{許可證} 實測不是 PDF，會轉址到電子仿單頁並自動彈出驗證碼匯出視窗，
+// 與「電子仿單（新版）」重複，故不渲染（2026-10-12）。
+const PACKAGE_LINK_KINDS = [
+    { re: /^\/insert\/pdfcasefile\//, kind: 'insert', label: 'PDF 仿單' },
+    { re: /^\/insert\/lablefiles\//,  kind: 'label',  label: '外盒/標籤' },
+    { re: /^\/exportpdf\//,           kind: 'export', label: '' },
+];
+
+// API 39／42 的單一欄位可能以「;」串接多個網址（實測仿單 8,927 張證、外觀圖 419 張證），
+// 原樣當成一個 URL 會讓第二個以後的檔案變成查詢字串而點不到。拆開並去重（保持原順序）。
+function splitLinks(list) {
+    const seen = new Set(), out = [];
+    for (const raw of list || []) {
+        for (const part of String(raw).split(';')) {
+            const t = part.trim();
+            if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+        }
+    }
+    return out;
+}
+
+// 同類連結超過此數即收進 <details>，避免單張卡片出現數十顆按鈕（外盒圖最多 36 張）
+const LINK_GROUP_THRESHOLD = 2;
+
+function linkButtons(hrefs, icon, label, groupAbove = LINK_GROUP_THRESHOLD) {
+    if (!hrefs.length) return '';
+    const btns = hrefs.map((href, i) =>
+        `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="link-btn link-btn-outline">${icon} ${label}${hrefs.length > 1 ? ' ' + (i + 1) : ''}</a>`
+    ).join('');
+    if (hrefs.length <= groupAbove) return btns;
+    return `<details class="link-group">
+            <summary class="link-btn link-btn-outline">${icon} ${label}（${hrefs.length}）</summary>
+            <div class="link-group-list">${btns}</div>
+        </details>`;
+}
+
+function classifyPackageLink(raw) {
+    const href = safeUrl(raw);
+    if (!href) return null;
+    const path = new URL(href).pathname;
+    const hit = PACKAGE_LINK_KINDS.find(k => k.re.test(path));
+    return hit ? { href, kind: hit.kind, label: hit.label }
+               : { href, kind: 'other', label: '其他連結' };
 }
 
 // ── Autosuggest ───────────────────────────────────────────────
