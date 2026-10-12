@@ -316,3 +316,51 @@ describe('classifyPackageLink / 仿單按鈕', () => {
     assert.deepEqual(labelsOf(null), []);
   });
 });
+
+// ── 用法用量：轉介文字不顯示，實質內容顯示 ─────────────────────────
+describe('isPlaceholderUsage / 用法用量區塊', () => {
+  const placeholders = [
+    '', '   ', null, undefined, '。',
+    '詳見仿單', '請詳見仿單', '詳如仿單。', '如仿單', '請詳閱說明書', '請詳閱說明書後使用',
+    '請詳閱說明書後使用本藥須由醫師處方使用', '本藥須由醫師處方使用。詳細用法用量請參見仿單。',
+    '本藥須由醫師處方使用。詳閱仿單說明書', '詳細內容請參閱仿單', '(詳細敘述請參見仿單擬稿)',
+    '詳見中文仿單擬稿。', '詳如電子仿單核定本', '請參照仿單說明',
+    '製劑原料', '製劑原料。', '本品為原料藥粉末，非一般製劑。', '本產品為原料藥結晶性粉末。',
+    '詳如仿單所述', '請參考仿單', '依仿單內容刊載。', '詳見藥品仿單。', '詳如核定本',
+    '請詳閱說明書後使用。本藥限由醫師使用。', '原料藥', '專供硬膠囊製劑用', '醫師處方藥品', '*',
+  ];
+  const substantive = [
+    '1天3次，每次1錠',
+    '成人每天劑量為13-15mg/kg，分2-4次服用',
+    '以棉球沾之塗於患部。',
+    '需要時使用，每次1至2滴。請詳見仿單',
+    '通常成人每天一次，每次口服ㄧ顆膠囊。本藥須由醫師處方使用。',
+    '每日口服一錠。(請詳見藥品仿單)',
+    '請詳見仿單\n(一天3至4次，每次1至2滴)',
+  ];
+
+  for (const s of placeholders) {
+    test(`隱藏：${JSON.stringify(s)}`, () => assert.equal(win.isPlaceholderUsage(s), true));
+  }
+  for (const s of substantive) {
+    test(`顯示：${s}`, () => assert.equal(win.isPlaceholderUsage(s), false));
+  }
+
+  const usageLabel = (usage) => {
+    const div = win.document.createElement('div');
+    div.innerHTML = win.buildCard({ licenseNumber: 'X', usage }, '');
+    return [...div.querySelectorAll('.info-label')].find(e => e.textContent.includes('用法用量'));
+  };
+
+  test('卡片：實質內容出現區塊並標明以仿單為準', () => {
+    const label = usageLabel('1天3次，每次1錠');
+    assert.ok(label);
+    assert.match(label.textContent, /以仿單為準/);
+    assert.equal(label.nextElementSibling.textContent, '1天3次，每次1錠');
+  });
+
+  test('卡片：轉介文字整個區塊省略', () => {
+    assert.equal(usageLabel('請詳見仿單'), undefined);
+    assert.equal(usageLabel(undefined), undefined);
+  });
+});

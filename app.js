@@ -364,6 +364,13 @@ function buildCard(drug, keyword = '') {
         linkButtons(hrefsOf('label'),  '📃', '外盒/標籤') +
         linkButtons(hrefsOf('other'),  '📃', '其他連結');
 
+    // 用法用量（許可證登載）：只顯示有實質內容者
+    const usageSection = isPlaceholderUsage(drug.usage) ? '' : `
+        <div class="info-section">
+            <div class="info-label">📝 用法用量（許可證登載，以仿單為準）</div>
+            <div class="info-content">${escapeHtml(drug.usage.trim())}</div>
+        </div>`;
+
     const pkgBtns = fdaPkgBtn + oldPkgBtns;
 
     // 外觀按鈕
@@ -447,6 +454,7 @@ function buildCard(drug, keyword = '') {
             <div class="info-label">💊 適應症</div>
             <div class="info-content">${escapeHtml(drug.indication || '無資料')}</div>
         </div>
+        ${usageSection}
 
         <div class="info-section">
             <div class="info-label">🧪 主要成分</div>
@@ -607,6 +615,31 @@ function classifyPackageLink(raw) {
     const hit = PACKAGE_LINK_KINDS.find(k => k.re.test(path));
     return hit ? { href, kind: hit.kind, label: hit.label }
                : { href, kind: 'other', label: '其他連結' };
+}
+
+// ── 用法用量：濾除「只是轉介仿單」的登載文字 ──────────────────────
+// API 37 的用法用量欄約八成是「詳見仿單」「製劑原料」這類無內容文字（寫法變體上百種）。
+// 誤藏 = 藥師漏看實質內容；誤顯 = 多一行雜訊。故寧可顯示：整段去標點後須「完全」
+// 符合轉介句型才隱藏，混合型（「每次1至2滴。請詳見仿單」）照常顯示。
+const USAGE_PUNCT_RE = /[\s。．.，,、；;:：!！?？()（）「」『』【】\[\]]/g;
+const USAGE_RX_ONLY = '(本藥須由醫師處方使用|本藥限由醫師使用|醫師處方藥品)';
+const USAGE_REFERRAL_RE = new RegExp(
+    `^${USAGE_RX_ONLY}?` +
+    '(內容|詳細內容|詳細用法用量|詳細敘述|用法用量)?(請)?' +
+    '(詳見|詳如|詳閱|詳參|參閱|參照|參見|參考|依|如|見)' +
+    '(中文|藥品|核定)?(仿單|說明書|電子仿單核定本|仿單核定本|核定本)' +
+    '(說明書|說明|擬稿|所載|所述|內容)?(刊載)?(後)?(使用)?' +
+    `${USAGE_RX_ONLY}?$`
+);
+const USAGE_NON_CONTENT_RE = new RegExp(
+    '^(製劑原料藥?|原料藥|原料製劑|專供.{0,6}製劑(之)?用|(本品|本產品)為原料藥\\D{0,12}|' +
+    `${USAGE_RX_ONLY})$`
+);
+
+function isPlaceholderUsage(text) {
+    const s = String(text || '').replace(USAGE_PUNCT_RE, '');
+    // 去標點後無任何文字或數字（如「*」）亦視為無內容
+    return !/[\p{L}\p{N}]/u.test(s) || USAGE_REFERRAL_RE.test(s) || USAGE_NON_CONTENT_RE.test(s);
 }
 
 // ── Autosuggest ───────────────────────────────────────────────
