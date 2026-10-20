@@ -18,8 +18,20 @@
 針對臨床醫療人員與一般民眾的查詢痛點，本專案前端具備以下工程與體驗優勢：
 
 * 🚀 **毫秒級檢索效能 (In-Memory Search)：** 放棄傳統 API 往返查詢。當使用者載入網頁時，輕量化 JSON 已快取至本地，所有中英文模糊搜尋皆在記憶體內瞬間完成，達成「所打即所得」的零延遲體驗。
-* 🔎 **品名／成分雙軌搜尋 (Search Scope)：** 除中英文品名外，可切換以**成分**檢索，直接比對原始 `ingredients` 欄位，故 `AMLODIPINE` 亦可命中 `AMLODIPINE (AS BESYLATE)`。此舉可涵蓋品名不含成分字串的商品名（如「脈優」），成分檢索之結果集顯著大於品名檢索。預設維持「品名」範圍，避免如 ACETAMINOPHEN 等常見成分之複方製劑稀釋品名查詢結果。
-* 💡 **搜尋建議 (Autosuggest)：** 輸入 2 字以上即時提示，分「成分／品名」兩區並標示成分對應之品項筆數，支援鍵盤上下鍵選取。索引於資料載入後建立一次（現況約 3.7K 個相異成分、42K 個品名；此規模隨每週資料更新浮動，實際筆數以 `data_version.json` 為準）。成分建議於「品名」範圍下亦會出現，作為切換範圍之捷徑，點選後範圍鈕同步變更，不靜默改動結果集。
+* 🔎 **品名／成分／ATC 搜尋範圍 (Search Scope)：** 除中英文品名外，可切換以**成分**檢索，直接比對原始 `ingredients` 欄位，故 `AMLODIPINE` 亦可命中 `AMLODIPINE (AS BESYLATE)`。此舉可涵蓋品名不含成分字串的商品名（如「脈優」），成分檢索之結果集顯著大於品名檢索。預設維持「品名」範圍，避免如 ACETAMINOPHEN 等常見成分之複方製劑稀釋品名查詢結果。
+* 🏷️ **ATC 碼搜尋：** 以開頭相符比對健保 ATC 碼，支援找同類藥與精確查詢兩種用途：`C09` 列出整個 RAS 類，`C09CA01` 只列 losartan。結果上方附 **ATC 分組摘要表**（代碼／成分／品項數），點代碼即縮小到該組，解決卡片上限 30 筆看不到整類的問題。需注意以下限制：
+  * ATC 碼**只來自健保署資料**，非健保品項以 ATC 搜不到。結果上方固定顯示此說明。
+  * 健保只登載到上層的代碼（如只到 `N07CA`）**不列入**較深一層的查詢，只提示筆數，因為這些品項可能是同類別的其他藥。
+  * 「全部」範圍刻意不併入 ATC 比對。
+
+  設計見 `docs/plan-atc-search.md`。
+* 🌐 **美國處方藥仿單參考（openFDA）：** 藥品卡片內的摺疊區塊。依成分與給藥途徑，比對 openFDA 收錄的美國處方藥仿單，顯示**代表仿單**的 Boxed Warning、懷孕、哺乳原文，並附 DailyMed 連結。代表仿單以 NDA/BLA 原廠仿單優先。
+  * 比對規則刻意**嚴格**：反離子鹽與水合物視為相同；酯類與前驅藥保留差異；複方須成分集合完全相等。
+  * 只做**正面陳述**：openFDA 約三成現行處方藥仿單缺結構化欄位，「未找到 Boxed Warning」不代表沒有。
+  * 區塊頂端固定警示「非本品項的台灣核准資訊」。
+
+  規格與驗收紀錄見 `docs/plan-us-label.md`。
+* 💡 **搜尋建議 (Autosuggest)：** 輸入 2 字以上即時提示，分「成分／品名」兩區（輸入像 ATC 碼且 ≥3 碼時另有「以 ATC 搜尋」）並標示成分對應之品項筆數，支援鍵盤上下鍵選取。索引於資料載入後建立一次（現況約 3.7K 個相異成分、42K 個品名；此規模隨每週資料更新浮動，實際筆數以 `data_version.json` 為準）。成分建議於「品名」範圍下亦會出現，作為切換範圍之捷徑，點選後範圍鈕同步變更，不靜默改動結果集。
 * ⚡ **極輕量化 (Zero Dependencies)：** 捨棄沈重的現代化框架 (如 React/Vue)，採用純 Vanilla JS 與原生 DOM 操作實作。核心渲染引擎極小化，顯著降低首次可互動時間 (Time to Interactive, TTI)。
 * 📱 **響應式卡片設計 (Responsive UI)：** 採用 Mobile-first 策略開發，將龐雜的仿單資料轉化為結構化的「藥品資訊卡 (Drug Cards)」。無論於行動裝置或護理站桌機，皆能提供清晰的適應症、成分與用法用量閱讀體驗。
 * 🔗 **跨資料集深度整合：** 介面層自動將「藥品許可證」、「原廠仿單連結 (PDF)」與「健保給付規定」等跨部會孤島資料進行視覺化綁定，大幅降低臨床藥師或醫師的資訊檢索成本。
@@ -29,19 +41,21 @@
 | 模組屬性 | 技術實作 | 功能描述 |
 | :--- | :--- | :--- |
 | **前端展示層 (Frontend)** | HTML5, Vanilla JavaScript, CSS3 | 採事件驅動，依賴本地/CDN 快取之 `drugs_data.json` 進行記憶體內 (In-memory) 模糊搜尋與 DOM 渲染。 |
-| **資料擷取層 (ETL)** | Python 3.x (`build_data.py`) | 負責串接 TFDA 開放資料 API (許可證、仿單等)，執行欄位過濾、合併與結構正規化。 |
-| **自動化排程 (CI/CD)** | GitHub Actions | 透過 `.github/workflows` 內的 YAML 定義 Cron Job，定期執行 ETL 腳本並將變更自動 Commit 至儲存庫。 |
+| **資料擷取層 (ETL)** | Python 3.x (`build_data.py`) | 負責串接 TFDA 開放資料 API (許可證、仿單等)，執行欄位過濾、合併與結構正規化；並依劑型與成分為每個品項產生美國仿單比對鍵。 |
+| **美國仿單參考 (ETL)** | Python 3.x (`build_us_label.py`、`us_label.py`) | 下載 openFDA `/drug/label` **bulk 全量**（14 檔約 1.8 GB，逐檔核對清單筆數），計算每個鍵的代表仿單，輸出 `us_label_data.json`（gzip 約 1 MB）。採**全有或全無**：任何失敗即中止並保留上一版，主資料照常發布。 |
+| **自動化排程 (CI/CD)** | GitHub Actions | `Build Drug Database`：每週排程執行兩段 ETL 並自動 Commit 變更。`Tests`：於 PR／push 時執行 pytest 與前端 jsdom 測試。 |
 | **主機與網路 (Hosting)** | GitHub Pages | 負責靜態檔案派發 (CDN)，提供具備高可用性之 HTTPS 存取端點。 |
 
 ## 資料處理流程步驟 (Data Pipeline)
 
 系統資料更新遵循以下自動化流程：
-1. **排程觸發 (Trigger)：** GitHub Actions 依設定之 Cron 頻率（例如每月）啟動虛擬環境。
+1. **排程觸發 (Trigger)：** GitHub Actions 每週日 UTC 18:00（台灣週一 02:00）啟動；`workflow_dispatch` 可手動觸發，push 到 main 且改動 ETL 腳本時也會觸發。
 2. **依賴安裝 (Setup)：** 讀取 `requirements.txt` 安裝必要之 Python 模組。
 3. **資料拉取 (Fetch)：** `build_data.py` 向 TFDA 伺服器發出 HTTP GET 請求，下載原始大型 JSON 資料集。
 4. **資料清洗 (Cleanse)：** 移除前端展示無需之冗餘欄位，將資料體積極小化，並建立以「許可證字號」為關聯鍵之整合結構。
 5. **靜態生成 (Build)：** 輸出精簡版之 `drugs_data.json` 覆寫原檔案。
-6. **版控推播 (Deploy)：** GitHub Actions 自動將更新後的 JSON 檔 Commit 並 Push 至 Main 分支，觸發 GitHub Pages 更新。
+6. **美國仿單參考 (US label)：** `build_us_label.py` 下載 openFDA bulk，計算後輸出 `us_label_data.json`。此步驟設 `continue-on-error`，失敗時 commit 前會還原上一版，不影響主資料發布。
+7. **版控推播 (Deploy)：** 兩個資料檔任一內容有變動時，自動 Commit 並 Push 至 Main 分支，觸發 GitHub Pages 更新；只有時間戳改變時不 commit。
 
 ## 本地開發與環境建置步驟
 
@@ -62,6 +76,9 @@ cd TFDA-drug-info-search
 # 執行資料更新腳本，生成最新 drugs_data.json
 uv run --with-requirements requirements.txt python build_data.py
 
+# 執行美國仿單參考建置（需先有 drugs_data.json；會下載約 1.8 GB）
+uv run --with-requirements requirements.txt python build_us_label.py
+
 # 執行測試（requirements-dev.txt 含 pytest）
 uv run --with-requirements requirements-dev.txt python -m pytest tests/ -q
 ```
@@ -77,9 +94,15 @@ uv run python -m http.server 8000
 
 完成後，於瀏覽器造訪 `http://localhost:8000` 即可預覽介面與測試搜尋功能。
 
+前端測試以 jsdom 載入 `index.html` 與 `app.js`（需 Node 與 `npm ci`）：
+
+```bash
+npm test   # xss.spec.mjs（XSS 迴歸）、us_label.spec.mjs（仿單區塊、SW 驗證）、atc.spec.mjs（ATC 搜尋）
+```
+
 ## 邏輯漏洞與維護注意事項
 
-* **檔案體積監控：** 監控對象應為 **gzip 壓縮後之傳輸量**，而非磁碟上的原始檔案大小——GitHub Pages 預設啟用 gzip，兩者差距約 4.5 倍。截至 2026-07，原始檔 37.7MB、實際傳輸 **8.3MB**。建議以傳輸量 10MB 為警戒線。
+* **檔案體積監控：** 監控對象應為 **gzip 壓縮後之傳輸量**，而非磁碟上的原始檔案大小——GitHub Pages 預設啟用 gzip，兩者差距約 4.5 倍。截至 2026-07，原始檔 37.7MB、實際傳輸 **8.3MB**。建議以傳輸量 10MB 為警戒線。`us_label_data.json` 另計，預算為 gzip 3MB（2026-10 實測約 1MB），且只在首次展開仿單區塊時才載入。
 
   以下為本機實測（8 核 / 16GB，Chrome）之各階段成本，可見**運算並非瓶頸，網路傳輸才是**：
 
@@ -93,7 +116,7 @@ uv run python -m http.server 8000
   JS heap 峰值約 138MB（桌機上限 4192MB，無虞）。**低階行動裝置之 heap 上限遠低於此，尚未實測**，若日後回報行動端崩潰，應優先從此處查起。
 * **API 端點穩定性：** `build_data.py` 依賴 TFDA 開放資料平台的 URL 結構與 JSON Key 命名。若政府端無預警更動 Schema，將導致 GitHub Actions 構建失敗，需隨時檢視 Action 執行日誌。
 * **成分欄僅有英文：** TFDA 原始資料之 `ingredients` 欄位為英文成分名（鹽類寫於括號內，多成分以 `;;` 分隔），**不含中文**。故成分範圍無法以「阿莫西林」等中文檢索（實測回傳 0 筆）。若需支援，須另建中英成分對照表，非前端可自行解決。資料覆蓋率：全體約 88.7% 有成分，健保品項則幾乎全數（僅個位數缺漏）。**總筆數與健保品項數請一律以 `data_version.json` 的 `totalRecords` / `nhiRecords` 為準**，該檔於每次建置時重寫；此處不寫死絕對筆數，以免隨每週更新而過期。
-* **資料快取策略 (SWR)：** `sw.js` 對 `drugs_data.json` 採 stale-while-revalidate——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（0 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
+* **資料快取策略 (SWR)：** `sw.js` 對資料檔（`drugs_data.json`、`us_label_data.json`，列於 `DATA_FILES`）採 stale-while-revalidate，**每個檔各有獨立的驗證函式與更新鎖**，驗證失敗就保留舊快取——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（0 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
 
   註：Service Worker 於**首次**造訪時是在 `drugs_data.json` 請求發出後才完成註冊，故攔截不到該次請求、亦無從快取。**第 2 次**造訪才由 SW 接手並寫入快取，**第 3 次**起才進入 304 穩態。測試快取行為時若只重載一次會誤判為失效。
 * **Service Worker 快取版本：** 修改 `index.html` 或 `app.js` 後**建議**同步提升 `sw.js` 之 `STATIC_CACHE` 版本號，但理由與直覺相反：
@@ -107,5 +130,5 @@ uv run python -m http.server 8000
 
   > **⚠️ 此處行為已於 2026-07-20 變更，尚未重新實測。** 先前的實測結論是：network-first 分支中的 `cache.put` 為 fire-and-forget（未受 `waitUntil` 保護），SW 事件結束即遭丟棄，故離線副本**不會**更新，唯有升版號觸發 `install` 的 `addAll` 才會刷新。該缺陷已修正（`cache.put` 現已納入 `event.waitUntil`），理論上離線副本應能在一般瀏覽中自行更新，但**上表「不升版號」一欄的新行為尚未經實測驗證**，暫時維持升版號的建議。
   >
-  > 另注意：`install` 的 `addAll` 預快取清單現含 `./app.js`，**新增靜態檔案時務必同步加入該清單**，否則離線時會缺檔而整站無法運作。
+  > 另注意：`install` 的 `addAll` 預快取清單現含 `./app.js`，**新增靜態檔案時務必同步加入該清單**，否則離線時會缺檔而整站無法運作。**資料檔例外**：新增資料檔要加進 `sw.js` 的 `DATA_FILES`（並寫該檔的驗證函式），**不可**放進 install 清單，否則每次安裝 SW 都會預先下載整份資料。
 
