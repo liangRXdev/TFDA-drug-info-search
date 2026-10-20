@@ -1,6 +1,6 @@
 # 規劃：美國處方藥仿單參考區塊（openFDA `/drug/label`）
 
-- 修訂：**v8**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v8 依 Phase 0／Phase 1 實測＋使用者決策＋`/codex-review` 判定 `.ai-review/verdict.md`）
+- 修訂：**v9**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v9 依 Phase 0／Phase 1 實測＋使用者決策＋`/codex-review` 判定 `.ai-review/verdict.md`）
 - 狀態：**Phase 0 通過**（§10）；Phase 1 實作完成、`/codex-review` 修正完成、真實資料端到端通過，待人工抽驗（§9 D）
 
 ---
@@ -143,6 +143,7 @@ C 是同時符合以下三個條件的 SPL：
   - **哺乳**：先嘗試從 `use_in_specific_populations` 擷取 8.2，擷取成功就採用；否則若 `nursing_mothers` 有內容，就採用它；兩者都沒有 → 狀態為「未找到」。
   - **8.2 擷取規則**：起點是第一個 `8.2 Lactation`（大小寫不拘），終點是之後第一個「`8.` 加數字、再加空白、再接英文標題字」的位置，例如 `8.3 Females`、`8.4 Pediatric`。**括號內的交叉引用**（例如 `( 8.3 )`、`(see 8.3 Females and Males …)`）不算終點：從起點起算，落在尚未閉合的 `(`／`[` 內的候選一律跳過；本段自身括號不平衡而找不到終點 → 擷取失敗。起點只看緊鄰前文——緊接在 `(`／`[` 之後的不算起點；不累計前文全部的括號深度，因為仿單原文常有漏打的右括號（v8，Codex CR5；實測 pantoprazole 等 4 份）。8.1 Pregnancy 用同一套規則。找不到起點或終點，就是擷取失敗。
   - 擷取失敗、但 R 確實有 `use_in_specific_populations` → 顯示「無法自動擷取，請見 DailyMed」，**不顯示截斷的內容**。
+- **BW 的 Highlights 摘要**（v9）：openFDA 把 PLR 仿單的兩個 BW 框接在同一個欄位，前段是完整處方資訊中的全文，後段是 Highlights 摘要，以「WARNING: X See full prescribing information for complete boxed warning」開頭。以下條件**全部成立**時，只顯示前段：摘要句只出現一次、往前 300 字內找得到 WARNING 標題、該標題也出現在前段、前段至少 80 字。任一條件不成立就保留原文。實測 bulk 中 12,085 份帶 BW 的仿單，6,517 份符合；本站 ① 的 443 個鍵中，273 個切除（都已驗證是舊文字的開頭片段，且切掉的都是摘要），29 個保留原文。
 - **原文**指欄位的完整陣列，多個元素依原順序全部保留；擷取 8.2 時只截取區間，不做任何改寫。
 - 無內容的認定：缺欄位、空陣列、只有空白、型別錯誤，都視為無內容。
 - 每個章節的狀態有三種：「有內容」、「未找到」、「無法擷取」（只有哺乳會出現）。其中「未找到」的文案是「代表仿單中未找到此段落」，依 G3，不做否定陳述。
@@ -428,3 +429,4 @@ ETL → 資料檔 → 前端 → SW → workflow，依 §9 驗收。
 | v6 | §6.4 改為「代表仿單」：NDA/BLA 優先、生效日最新；BW 來源規則；懷孕／哺乳只取自 R，取消跨來源一致性比對；哺乳改為嚴格擷取 8.2（openFDA 沒有 `lactation` 欄位），失敗時改放連結；D13 由逐份清單改為代表仿單；A4、A9、A10 跟進 | Phase 1 開工前實測（metformin 106 種 BW 版本、無 `lactation` 欄位）＋使用者決策 |
 | v7 | 資料來源改為 openFDA bulk 全量（D1、D3、D4、§6.2、§7、B1–B3）；失敗契約改為全有或全無；懷孕段落新增 8.1 擷取；BW 來源提示改用「未找到」措辭；T2 清單依真實資料補上（AS 括號、酯類攤平、CLATHRATE、HEMITARTRATE、2HCL、HYDROGEN）；記錄 Phase 1 結果 | Phase 1 實測＋使用者決策（bulk） |
 | v8 | `/codex-review` 修正：資料契約補強並以三方共用反例驗證（§6.3）；8.1／8.2 擷取的括號規則（§6.4）；寫檔順序、workflow 失敗還原、17 分鐘時限、summary 品項統計（D12、§7、B3）。真實資料重跑後，與修正前輸出 0 鍵差異 | `.ai-review/verdict.md` |
+| v9 | §6.4 BW 去除後段 Highlights 摘要（結構明確才切，否則保留原文）；起因是人工驗收時發現 BW 重複出現 | 使用者決策（a） |

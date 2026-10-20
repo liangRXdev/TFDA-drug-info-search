@@ -601,3 +601,36 @@ def test_real_compute_results_satisfy_strict_contract():
             label(["X"], nursing_mothers=["N"])]
     for key, labels in ((ORAL("X"), pool), (ORAL("X"), [pool[1]]), (ORAL("Y"), pool)):
         assert validate_result(compute_result(key, labels))
+
+
+# ── BW 的 Highlights 摘要（openFDA 把兩個 BW 框接在同一欄位）──────────────
+from us_label import strip_highlights_summary
+
+FULL_BW = ("WARNING: BLEEDING RISK Warfarin sodium can cause major or fatal bleeding [see Warnings "
+           "and Precautions (5.1)]. Perform regular monitoring of INR in all treated patients.")
+HL_BW = ("WARNING: BLEEDING RISK See full prescribing information for complete boxed warning. "
+         "• Warfarin sodium can cause major or fatal bleeding. (5.1)")
+
+
+def test_strip_highlights_keeps_full_bw_only():
+    assert strip_highlights_summary([FULL_BW + " " + HL_BW]) == [FULL_BW]
+    # 跨陣列元素也可
+    assert strip_highlights_summary([FULL_BW, HL_BW]) == [FULL_BW]
+
+
+@pytest.mark.parametrize("bw", [
+    [FULL_BW],                                              # 沒有摘要句
+    [HL_BW + " " + FULL_BW],                                # 摘要在前：結構不明確
+    ["WARNING: X short. " + HL_BW.replace("BLEEDING RISK", "X")],   # 前段過短
+    [FULL_BW + " " + HL_BW.replace("BLEEDING RISK", "OTHER RISK")],  # 標題對不上
+    [FULL_BW + " " + HL_BW + " " + HL_BW],                  # 摘要句出現兩次
+    [FULL_BW + " See full prescribing information for complete boxed warning."],  # 找不到摘要標題
+])
+def test_strip_highlights_falls_back_to_original_when_ambiguous(bw):
+    assert strip_highlights_summary(bw) == bw
+
+
+def test_compute_result_shows_full_bw_without_highlights():
+    res = run(ORAL("WARFARIN"), [label(["WARFARIN SODIUM"], bw=FULL_BW + " " + HL_BW)])
+    assert res["bw"] == [FULL_BW]
+    assert "See full prescribing information" not in res["bw"][0]

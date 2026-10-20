@@ -325,6 +325,41 @@ def extract_lactation(usp):
     return extract_subsection(usp, "2")
 
 
+# openFDA 把 PLR 仿單的兩個 BW 框（完整處方資訊的全文、Highlights 的摘要）接在同一個
+# boxed_warning 欄位：「完整 BW … WARNING: X See full prescribing information for complete
+# boxed warning. • 摘要條列」。2026-10-20 bulk 實測 12,085 份有 BW 的 Rx label 中 6,517 份
+# 是這種「完整在前、摘要在後」的結構。只在結構明確時切掉後段摘要；其餘一律保留原文
+# （寧可重複，不冒險切掉警語內容）。只擷取、不改寫（N4）。
+_HL_MARK_RE = re.compile(r"see\s+full\s+prescribing\s+information\s+for\s+complete\s+boxed\s+warning", re.I)
+_HL_HEAD_RE = re.compile(r"\bWARNINGS?\b", re.I)
+_HL_MIN_PREFIX = 80
+_HL_HEAD_LOOKBACK = 300
+
+
+def strip_highlights_summary(bw):
+    """回傳要顯示的 BW 陣列：結構明確時去掉後段 Highlights 摘要，否則原樣。"""
+    if not has_content(bw):
+        return bw
+    text = "\n".join(bw)
+    marks = list(_HL_MARK_RE.finditer(text))
+    if len(marks) != 1:
+        return bw
+    mark = marks[0]
+    heads = list(_HL_HEAD_RE.finditer(text, max(0, mark.start() - _HL_HEAD_LOOKBACK), mark.start()))
+    if not heads:
+        return bw
+    head = heads[-1].start()
+    prefix = text[:head].rstrip()
+    if len(prefix) < _HL_MIN_PREFIX:
+        return bw
+    # 摘要標題（如 BLEEDING RISK）須也出現在前段，才能確定前段就是同一個完整 BW
+    title = re.sub(r"\s+", " ", text[head:mark.start()]).strip(" :.-–")
+    core = re.sub(r"^WARNINGS?\s*[:：]?\s*", "", title, flags=re.I)[:40].upper()
+    if not core or core not in re.sub(r"\s+", " ", prefix).upper():
+        return bw
+    return [prefix]
+
+
 def section_pregnancy(r):
     if has_content(r.get("pregnancy")):
         return {"st": "ok", "sec": "pregnancy", "t": r["pregnancy"]}
@@ -408,7 +443,7 @@ def compute_result(key, pool):
     }
     if with_bw:
         bw_src = rep if has_content(rep.get("boxed_warning")) else select_representative(with_bw)
-        out["bw"] = bw_src["boxed_warning"]
+        out["bw"] = strip_highlights_summary(bw_src["boxed_warning"])
         if bw_src is not rep:
             out["b"] = source_info(bw_src)
     return out
