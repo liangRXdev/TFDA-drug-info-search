@@ -2,6 +2,10 @@ const DATA_URL = './drugs_data.json';
 // 建置時間戳獨立成小檔：若寫在 drugs_data.json 內，該檔每次建置必然改變，
 // CI 的「資料無變動則跳過 commit」會永遠失效
 const VERSION_URL = './data_version.json';
+// 美國處方藥仿單參考（docs/plan-us-label.md）：卡片區塊首次展開時才載入
+const US_LABEL_URL = './us_label_data.json';
+// 須與 us_label.py 的 MATCH_RULES_VERSION 相同；三方（主資料、仿單資料、前端）不一致即不可用
+const US_LABEL_RULES_VERSION = 1;
 
 const searchInput      = document.getElementById('searchInput');
 const searchBtn        = document.getElementById('searchBtn');
@@ -17,6 +21,8 @@ const scopeBtns        = document.querySelectorAll('.scope-btn');
 const suggestBox       = document.getElementById('suggestBox');
 
 let drugDatabase = [];
+let drugsMeta    = {};          // drugs_data.json 的 _meta（含 usLabelRulesVersion）
+let versionInfo  = null;        // data_version.json（含 usLabelGeneratedAt）
 let currentFilter = 'nhi';      // 預設健保品項
 let currentScope  = 'name';      // 搜尋範圍：name / ingredient / both
 let currentDosage = 'all';       // 劑型篩選
@@ -43,6 +49,8 @@ async function initDatabase() {
         drugDatabase = Array.isArray(json) ? json : (json.data || []);
 
         const meta = json._meta || {};
+        drugsMeta = meta;
+        versionInfo = version;
         const total = (meta.totalRecords || drugDatabase.length).toLocaleString();
         const nhi   = (meta.nhiRecords || 0).toLocaleString();
         const date  = version && version.generatedAt
@@ -462,6 +470,7 @@ function buildCard(drug, keyword = '') {
         </div>
 
         ${nhiSection}
+        ${buildUsLabelSection(drug)}
         ${imageSection}
 
         <div class="links-row">
@@ -483,6 +492,12 @@ resultsContainer.addEventListener('click', e => {
     const copyBtn = e.target.closest('.copy-mini');
     if (copyBtn) {
         copyNhiCode(copyBtn.dataset.code || '', copyBtn);
+        return;
+    }
+    const usSummary = e.target.closest('.us-label-summary');
+    if (usSummary) {
+        // <details> 的展開由瀏覽器預設行為處理；這裡只負責首次載入內容
+        loadUsLabelInto(usSummary.closest('.us-label'));
         return;
     }
     const header = e.target.closest('.drug-header');
@@ -540,7 +555,9 @@ function escapeHtml(s) {
 // 實測現行資料的 83,491 個 URL 全為 https，且僅來自 fda.gov.tw 與
 // nhi.gov.tw 兩個網域，故可同時限制 scheme 與網域而不影響既有連結。
 // 用網域後綴而非完整 hostname 比對，官方新增子網域時才不會靜默失連。
-const ALLOWED_URL_DOMAINS = ['fda.gov.tw', 'nhi.gov.tw'];
+// dailymed.nlm.nih.gov：美國仿單參考區塊的導覽連結（docs/plan-us-label.md D10）。
+// 只放行此完整子網域，不放寬到 nih.gov——其餘 NIH 網站與本工具無關。
+const ALLOWED_URL_DOMAINS = ['fda.gov.tw', 'nhi.gov.tw', 'dailymed.nlm.nih.gov'];
 
 function safeUrl(raw) {
     if (!raw) return '';
@@ -567,6 +584,189 @@ function priceHistoryUrl(code) {
     const c = String(code || '').trim();
     if (!NHI_CODE_RE.test(c)) return '';
     return `${PRICE_HISTORY_BASE}?code=${encodeURIComponent(c.toUpperCase())}`;
+}
+
+// ── 美國處方藥仿單參考（openFDA；docs/plan-us-label.md）────────────────
+// 狀態語義的唯一權威定義在規格 §6.3，這裡只負責呈現。依 G3 只做正面陳述：
+// 「未找到 BW」絕不可寫成「沒有 BW」——openFDA 約三成仿單缺結構化資料，無法比對。
+const US_LABEL_DISCLAIMER =
+    '以下為 openFDA 收錄之美國處方藥仿單內容，依成分與給藥途徑比對，並非本品項的台灣核准資訊；' +
+    '適應症、劑量與警語可能不同。不可取代醫師或藥師的專業判斷。';
+const DAILYMED_SETID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const US_SECTION_NAMES = {
+    'pregnancy': '8.1 Pregnancy',
+    'teratogenic_effects': 'Pregnancy（舊格式）',
+    '8.2 Lactation': '8.2 Lactation',
+    'nursing_mothers': 'Nursing Mothers（舊格式）',
+};
+const US_LABEL_STATES = new Set(['bw', 'nobw', 'nomatch', 'unavailable']);
+
+// 與 sw.js 的 isValidUsLabelEntry、us_label.py 的 validate_result 為同一份資料契約，三處須同步
+function isValidUsLabelEntry(e) {
+    if (!e || typeof e !== 'object' || !US_LABEL_STATES.has(e.s)) return false;
+    if (e.s === 'nomatch' || e.s === 'unavailable') return Object.keys(e).length === 1;
+    if (!Number.isInteger(e.n) || !Number.isInteger(e.m) || !e.r || !e.r.id) return false;
+    if (e.s === 'bw') {
+        return e.m > 0 && e.m <= e.n && Array.isArray(e.bw) && e.bw.some(t => typeof t === 'string' && t.trim());
+    }
+    return e.m === 0 && !('bw' in e) && !('b' in e);
+}
+
+// set_id 須為 UUID 才產生連結：資料若被污染，最多是不出現連結
+function dailyMedSetUrl(setId) {
+    const s = String(setId || '');
+    if (!DAILYMED_SETID_RE.test(s)) return '';
+    return safeUrl(`https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${s.toLowerCase()}`);
+}
+
+function dailyMedSearchUrl(key) {
+    const ings = String(key || '').split('|')[1];
+    if (!ings) return '';
+    const q = encodeURIComponent(ings.split('+').join(' '));
+    return safeUrl(`https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query=${q}`);
+}
+
+function externalLink(href, text) {
+    return href
+        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="inline-link us-label-link">${text}</a>`
+        : '';
+}
+
+function fmtDate8(s) {
+    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(s || ''));
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+}
+
+function usSourceLine(src) {
+    if (!src || typeof src !== 'object') return '';
+    const bits = [
+        `<strong>${escapeHtml(src.name || '（未具名）')}</strong>`,
+        src.mfr ? escapeHtml(src.mfr) : '',
+        src.app ? escapeHtml(src.app) : '',
+        fmtDate8(src.eff) ? `生效日 ${fmtDate8(src.eff)}` : '',
+    ].filter(Boolean).join(' · ');
+    return `${bits} ${externalLink(dailyMedSetUrl(src.id), 'DailyMed 目前版本（可能比本站資料新）↗')}`;
+}
+
+function usTextBlock(arr) {
+    const parts = (Array.isArray(arr) ? arr : []).filter(t => typeof t === 'string' && t.trim());
+    return `<div class="us-label-text">${parts.map(escapeHtml).join('\n\n')}</div>`;
+}
+
+function usSectionHtml(title, sec, rep) {
+    let inner;
+    if (sec && sec.st === 'ok' && Array.isArray(sec.t)) {
+        const name = US_SECTION_NAMES[sec.sec] || '';
+        inner = `${name ? `<div class="us-label-secname">${escapeHtml(name)}</div>` : ''}${usTextBlock(sec.t)}`;
+    } else if (sec && sec.st === 'unextractable') {
+        inner = `<p class="us-label-msg">無法自動擷取此段落，請見 DailyMed。 ${externalLink(dailyMedSetUrl(rep && rep.id), 'DailyMed ↗')}</p>`;
+    } else {
+        inner = '<p class="us-label-msg">代表仿單中未找到此段落。</p>';
+    }
+    return `<div class="us-label-section"><div class="us-label-heading">${title}</div>${inner}</div>`;
+}
+
+function usLabelShell(inner) {
+    return `<p class="us-label-disclaimer">${US_LABEL_DISCLAIMER}</p>${inner}`;
+}
+
+const US_UNAVAILABLE_HTML = '<p class="us-label-msg">美國仿單資料暫時無法提供。</p>';
+
+function usNoMatchHtml(key) {
+    return `<p class="us-label-msg">查無可對應的美國處方藥仿單。 ${externalLink(dailyMedSearchUrl(key), '在 DailyMed 搜尋 ↗')}</p>`;
+}
+
+function renderUsLabel(entry, key, meta) {
+    if (!isValidUsLabelEntry(entry) || entry.s === 'unavailable') return usLabelShell(US_UNAVAILABLE_HTML);
+    if (entry.s === 'nomatch') return usLabelShell(usNoMatchHtml(key));
+
+    const n = entry.n, m = entry.m;
+    const parts = [];
+    if (entry.s === 'bw') {
+        const note = entry.b
+            ? `<p class="us-label-note">代表仿單中未找到 Boxed Warning，以下取自另一份仿單：${usSourceLine(entry.b)}</p>`
+            : '';
+        parts.push(`<div class="us-label-bw">
+            <div class="us-label-heading">⚠️ Boxed Warning</div>${note}${usTextBlock(entry.bw)}
+        </div>
+        <p class="us-label-stat">openFDA 可比對的 ${n} 份參考仿單中，${m} 份列有 Boxed Warning。</p>`);
+    } else {
+        parts.push(`<p class="us-label-msg us-label-nobw">在 openFDA 可比對的 ${n} 份美國處方藥仿單中<strong>未找到</strong> Boxed Warning。` +
+            `openFDA 約三成仿單缺結構化資料、無法比對，<strong>不代表本成分沒有 Boxed Warning</strong>，請至 DailyMed 確認。 ` +
+            `${externalLink(dailyMedSearchUrl(key), '在 DailyMed 搜尋 ↗')}</p>`);
+    }
+    parts.push(usSectionHtml('🤰 懷孕', entry.preg, entry.r));
+    parts.push(usSectionHtml('🍼 哺乳', entry.lact, entry.r));
+
+    const others = n > 1
+        ? `同成分同途徑另有 ${n - 1} 份仿單，內容可能因改版時間而略有差異，請見 DailyMed。` : '';
+    const exportDate = meta && typeof meta.openfdaExportDate === 'string' ? escapeHtml(meta.openfdaExportDate) : '未知';
+    const built = versionInfo && versionInfo.usLabelGeneratedAt
+        ? new Date(versionInfo.usLabelGeneratedAt).toLocaleDateString('zh-TW') : '未知';
+    parts.push(`<div class="us-label-source">
+        <div>代表仿單：${usSourceLine(entry.r)}</div>
+        <div>${others}openFDA 資料日期 ${exportDate}；本站建置 ${escapeHtml(built)}。</div>
+    </div>`);
+    return usLabelShell(parts.join(''));
+}
+
+function buildUsLabelSection(drug) {
+    // 主資料尚未含此功能（舊版快取）時整塊不顯示；有此功能後，缺欄位一律視為不可用
+    if (drugsMeta.usLabelRulesVersion === undefined && !drug.usLabelKey && !drug.usLabelStatus) return '';
+    const key = typeof drug.usLabelKey === 'string' ? drug.usLabelKey : '';
+    if (!key && drug.usLabelStatus === 'notApplicable') return '';
+    const body = key
+        ? '<p class="us-label-msg">載入中…</p>'
+        : usLabelShell(drug.usLabelStatus === 'noMatch' ? usNoMatchHtml('') : US_UNAVAILABLE_HTML);
+    const attr = key ? `data-us-key="${escapeHtml(key)}"` : 'data-us-ready="1"';
+    return `
+        <details class="us-label" ${attr}>
+            <summary class="us-label-summary">🇺🇸 美國處方藥仿單參考（openFDA）</summary>
+            <div class="us-label-body" aria-live="polite">${body}</div>
+        </details>`;
+}
+
+// single-flight：多張卡片同時展開只抓一次；失敗不快取，下次展開可重試
+let usLabelPromise = null;
+
+function fetchUsLabelData() {
+    if (!usLabelPromise) {
+        usLabelPromise = fetch(US_LABEL_URL)
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.json();
+            })
+            .then(json => {
+                const d = json && json.data;
+                if (json?._meta?.matchRulesVersion !== US_LABEL_RULES_VERSION
+                    || drugsMeta.usLabelRulesVersion !== US_LABEL_RULES_VERSION
+                    || !d || typeof d !== 'object' || Array.isArray(d)) {
+                    throw new Error('美國仿單資料版本或格式不符');
+                }
+                return json;
+            })
+            .catch(err => { usLabelPromise = null; throw err; });
+    }
+    return usLabelPromise;
+}
+
+async function loadUsLabelInto(details) {
+    if (!details || details.dataset.usReady === '1' || details.dataset.usLoading === '1') return;
+    const key = details.dataset.usKey || '';
+    const body = details.querySelector('.us-label-body');
+    details.dataset.usLoading = '1';
+    try {
+        const json = await fetchUsLabelData();
+        // 只渲染本卡片自己的鍵；hasOwnProperty 避免 "__proto__" 之類的鍵讀到原型
+        const entry = Object.prototype.hasOwnProperty.call(json.data, key) ? json.data[key] : null;
+        body.innerHTML = renderUsLabel(entry, key, json._meta);
+        details.dataset.usReady = '1';
+    } catch (err) {
+        console.error('美國仿單資料載入失敗:', err);
+        body.innerHTML = usLabelShell(US_UNAVAILABLE_HTML);   // 不標 ready：再次展開可重試
+    } finally {
+        delete details.dataset.usLoading;
+    }
 }
 
 // ── 仿單連結分類（API 39）──────────────────────────────────────

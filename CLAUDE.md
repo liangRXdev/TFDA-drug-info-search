@@ -24,14 +24,16 @@
 1. **新增靜態檔 → 必須同步加入 `sw.js` 的 install 預快取清單**，否則離線時整站壞掉。
    CI 有關卡擋（`test.yml:63` 逐一 grep `index.html` / `app.js` / `manifest.json`）——**新增第四個檔案時，記得把它一併加進那個 for 迴圈**，否則關卡形同虛設。
 
-2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v7`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
+   **資料檔例外**：`drugs_data.json`、`us_label_data.json` 不進 install 預快取，走 `sw.js` 的 `DATA_FILES`（stale-while-revalidate、每檔各自的驗證函式與 single-flight 鎖）。新增資料檔要加進 `DATA_FILES`，不是 install 清單。
+
+2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v8`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
    **清舊快取只刪自家三個家族前綴**（`OWN_PREFIXES`）：`liangrxdev.github.io` 由所有專案頁共用 origin，Cache Storage 不依 SW scope 隔離，`!ALL_CACHES.includes(k)` 會刪光同網域其他工具的快取（2026-09-12 修正）。不要縮成 `'tfda-'`——TFDA-drug-id-quiz 的快取也以它開頭。
 
 3. **CSP 是 `<meta>` 標籤不是 `_headers`**。`script-src 'self'` 意味著**不能寫 inline `<script>` 或 inline event handler**（`onclick=` 等）——JS 一律進 `app.js`。這裡不需要算 hash（那是 pharmacy-portal 的做法）。
 
 ## 前端連結白名單
 
-所有外部連結一律經 `safeUrl()`：限 `https` + `fda.gov.tw` / `nhi.gov.tw` 網域後綴。**未通過即不渲染**，不留下可點擊的壞連結。新增資料來源網域要同時改 `safeUrl()` 白名單與 CSP。
+所有外部連結一律經 `safeUrl()`：限 `https` + `fda.gov.tw` / `nhi.gov.tw` 網域後綴，以及 `dailymed.nlm.nih.gov`（美國仿單參考區塊的導覽連結；只放行此完整子網域，不放寬到 `nih.gov`）。**未通過即不渲染**，不留下可點擊的壞連結。新增資料來源網域要同時改 `safeUrl()` 白名單與 CSP。
 
 唯一例外：健保代號表的「健保藥價歷史 → 查看 ↗」（`priceHistoryUrl()`，2026-09-12 Phase 3）。目標是自家站 `https://liangrxdev.github.io/NHI-drug-price-history/?code=`，**前綴寫死**、代號須為 10 碼英數才產生連結——不是上游資料提供的 URL，所以**不要**為它放寬 `safeUrl()` 白名單。
 
@@ -44,11 +46,21 @@
 
 改匹配或日期邏輯前**先看 `tests/` 釘住的行為**——那些測試就是規格。
 
+## 美國處方藥仿單參考（openFDA）
+
+規格：`docs/plan-us-label.md`（§6 對應規則與狀態、§9 驗收）。`us_label.py` 為純規則，`build_us_label.py` 下載 openFDA **bulk**（不是 API 逐詞查詢——實測會超出時限），workflow 以 `continue-on-error` 執行，失敗時上一版位元不變、主資料照常發布。
+
+- **只做正面陳述（G3）**：openFDA 約三成現行 Rx 仿單缺 `openfda.*` 結構化欄位而比對不到，「未找到 BW」**絕不可**改寫成「無 BW／未列 BW」
+- **成分比對是嚴格的**，與健保那套刻意寬鬆的 `ingredient_core()` 方向相反——不要互相沿用。酯類（PHOSPHATE、DECANOATE…）刻意不在剝除清單
+- **改轉換清單、狀態語義或途徑對照表 → 升 `MATCH_RULES_VERSION`**，並同步 `app.js` 的 `US_LABEL_RULES_VERSION`（有 pytest 擋）
+- **資料契約三處同步**：`us_label.py` `validate_result`、`app.js` `isValidUsLabelEntry`、`sw.js` `isValidUsLabelEntry`（`tests/us_label.spec.mjs` 比對前端與 SW 判定一致）
+- `us_label_data.json` 不含時間戳（否則每次建置都變、「無變動不 commit」失效）；建置時間記在 `data_version.json` 的 `usLabelGeneratedAt`
+
 ## 測試與 CI
 
 ```bash
-python -m pytest tests/ -q      # ETL 邏輯（chapters / dates / decode / matching / retry_and_price）
-npm test                        # node --test tests/xss.spec.mjs（jsdom 前端 XSS 迴歸）
+python -m pytest tests/ -q      # ETL 邏輯（chapters / dates / decode / matching / retry_and_price / us_label / build_us_label）
+npm test                        # node --test：xss.spec.mjs（XSS 迴歸）＋ us_label.spec.mjs（仿單區塊、SW 驗證）
 ```
 
 - 兩個 workflow：`Tests`（PR/push 觸發，唯讀）、`Build Drug Database`（排程建資料）
