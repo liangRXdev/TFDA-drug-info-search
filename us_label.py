@@ -22,13 +22,14 @@ LICENSE_NOT_APPLICABLE = {"原料藥", "硬空膠囊"}
 
 # ── §6.1 成分轉換 ─────────────────────────────────────────────
 # T2a 寫法統一
-SPELLING = {"HCL": "HYDROCHLORIDE", "HBR": "HYDROBROMIDE",
+SPELLING = {"HCL": "HYDROCHLORIDE", "2HCL": "DIHYDROCHLORIDE", "HBR": "HYDROBROMIDE",
             "SULPHATE": "SULFATE", "MICRONISED": "MICRONIZED"}
 # T2b 水合物／物理型態
 HYDRATE_WORDS = {
     "MONOHYDRATE", "DIHYDRATE", "TRIHYDRATE", "TETRAHYDRATE", "PENTAHYDRATE",
     "HEXAHYDRATE", "HEPTAHYDRATE", "HEMIHYDRATE", "SESQUIHYDRATE", "HYDRATE",
     "ANHYDROUS", "HYDROUS", "MICRONIZED", "H2O",
+    "CLATHRATE",   # WARFARIN SODIUM CLATHRATE（Coumadin 的晶型；美方登載為 WARFARIN SODIUM）
 }
 # T2c 反離子鹽。刻意不含酯類（ACETATE、PHOSPHATE、SUCCINATE、VALERATE、
 # PROPIONATE、DECANOATE、PALMITATE…）：CLINDAMYCIN PHOSPHATE、HALOPERIDOL
@@ -37,11 +38,23 @@ COUNTER_ION_WORDS = {
     "HYDROCHLORIDE", "DIHYDROCHLORIDE", "HYDROBROMIDE", "SODIUM", "DISODIUM",
     "POTASSIUM", "DIPOTASSIUM", "CALCIUM", "MAGNESIUM", "SULFATE", "BISULFATE",
     "MESYLATE", "DIMESYLATE", "BESYLATE", "MALEATE", "FUMARATE", "HEMIFUMARATE",
-    "TARTRATE", "BITARTRATE", "CITRATE", "TOSYLATE", "LACTATE", "NITRATE",
+    "TARTRATE", "BITARTRATE", "HEMITARTRATE", "CITRATE", "TOSYLATE", "LACTATE", "NITRATE",
     "BROMIDE", "CHLORIDE", "IODIDE", "MALATE", "OXALATE", "XINAFOATE",
     "TROMETHAMINE", "MEGLUMINE", "GLUCONATE",
+    # 多字鹽類的前半：RIVASTIGMINE HYDROGEN TARTRATE 剝掉 TARTRATE 後須再剝 HYDROGEN
+    "HYDROGEN",
 }
 STRIP_WORDS = HYDRATE_WORDS | COUNTER_ION_WORDS
+# 酯類：不剝除，但 TFDA 常寫在括號內（BETAMETHASONE (AS DIPROPIONATE)），
+# 須攤平成尾詞才能與 openFDA 的 BETAMETHASONE DIPROPIONATE 原樣相等
+ESTER_WORDS = {
+    "ACETATE", "PHOSPHATE", "SUCCINATE", "VALERATE", "PROPIONATE", "DIPROPIONATE",
+    "BUTYRATE", "DECANOATE", "PALMITATE", "BENZOATE", "FUROATE", "CYPIONATE",
+    "ENANTHATE", "UNDECANOATE", "PIVALATE", "ACETONIDE", "ESTOLATE", "STEARATE",
+    "ETHYLSUCCINATE",
+}
+# 括號內只有這些詞時視為寫法差異，攤平成尾詞：MINOCYCLINE (HCL)、GENTAMICIN (AS SULFATE)
+FLATTEN_WORDS = STRIP_WORDS | ESTER_WORDS
 # 例外：剝除後若只剩這些（金屬／酸根），代表該詞本身就是有效成分
 # （SODIUM CHLORIDE、POTASSIUM CHLORIDE、MAGNESIUM SULFATE），不剝
 BARE_REMAINDER = {
@@ -64,10 +77,12 @@ def norm_ingredient(name):
     # T1：(EQ TO X) 取括號外——FOSPHENYTOIN (EQ TO PHENYTOIN) 仍是 FOSPHENYTOIN
     s = _EQ_TO_RE.sub(" ", s)
 
-    # 括號內只有轉換清單詞（如 MINOCYCLINE (HCL)）→ 攤平成尾詞；其他括號原樣保留
+    # 括號內只有已知鹽類／水合物／酯類詞（可帶前綴 AS）→ 攤平成尾詞；其他括號原樣保留
     def _flatten(m):
         words = [SPELLING.get(w, w) for w in m.group(1).split()]
-        if words and all(w in STRIP_WORDS for w in words):
+        if words[:1] == ["AS"]:
+            words = words[1:]
+        if words and all(w in FLATTEN_WORDS for w in words):
             return " " + " ".join(words) + " "
         return m.group(0)
 
@@ -253,31 +268,44 @@ def source_info(r):
     }
 
 
-# 8.2 Lactation 嚴格擷取：起點為「8.2 Lactation」，終點為之後第一個
-# 「8.x 英文標題字」（x≠2）。括號內交叉引用「( 8.3 )」後面不接標題字，自然不會被當成終點。
-_LACT_START_RE = re.compile(r"\b8\.2\s+Lactation\b", re.IGNORECASE)
+# 自 Section 8（use_in_specific_populations）嚴格擷取子章節：起點為「8.n 標題」，
+# 終點為之後第一個「8.x 英文標題字」（x≠n）。括號內交叉引用「( 8.3 )」後面不接標題字，
+# 自然不會被當成終點。openFDA 對新格式（PLLR）仿單不一定拆出 pregnancy 欄位，
+# 也從不拆出 lactation 欄位（2026-10-20 實測 0 筆）。
 _SECTION_HEAD_RE = re.compile(r"(?<![(\d.])\b8\.(\d{1,2})\s+[A-Z][A-Za-z]")
+_SUBSECTION_START = {
+    "1": re.compile(r"\b8\.1\s+Pregnancy\b", re.IGNORECASE),
+    "2": re.compile(r"\b8\.2\s+Lactation\b", re.IGNORECASE),
+}
 
 
-def extract_lactation(usp):
-    """自 use_in_specific_populations 擷取 8.2 Lactation 原文；無明確起訖 → None（不回傳截斷片段）。"""
+def extract_subsection(usp, num):
+    """擷取 8.<num> 原文；無明確起訖 → None（不回傳截斷片段）。"""
     if not has_content(usp):
         return None
     text = "\n".join(usp)
-    start = _LACT_START_RE.search(text)
+    start = _SUBSECTION_START[num].search(text)
     if not start:
         return None
     for m in _SECTION_HEAD_RE.finditer(text, start.end()):
-        if m.group(1) != "2":
+        if m.group(1) != num:
             body = text[start.start():m.start()].strip()
             return body or None
     return None
 
 
+def extract_lactation(usp):
+    return extract_subsection(usp, "2")
+
+
 def section_pregnancy(r):
-    for field in ("pregnancy", "teratogenic_effects"):
-        if has_content(r.get(field)):
-            return {"st": "ok", "sec": field, "t": r[field]}
+    if has_content(r.get("pregnancy")):
+        return {"st": "ok", "sec": "pregnancy", "t": r["pregnancy"]}
+    body = extract_subsection(r.get("use_in_specific_populations"), "1")
+    if body is not None:
+        return {"st": "ok", "sec": "8.1 Pregnancy", "t": [body]}
+    if has_content(r.get("teratogenic_effects")):
+        return {"st": "ok", "sec": "teratogenic_effects", "t": r["teratogenic_effects"]}
     return {"st": "none"}
 
 

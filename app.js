@@ -596,6 +596,7 @@ const DAILYMED_SETID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 const US_SECTION_NAMES = {
     'pregnancy': '8.1 Pregnancy',
     'teratogenic_effects': 'Pregnancy（舊格式）',
+    '8.1 Pregnancy': '8.1 Pregnancy',
     '8.2 Lactation': '8.2 Lactation',
     'nursing_mothers': 'Nursing Mothers（舊格式）',
 };
@@ -721,7 +722,7 @@ function buildUsLabelSection(drug) {
     const attr = key ? `data-us-key="${escapeHtml(key)}"` : 'data-us-ready="1"';
     return `
         <details class="us-label" ${attr}>
-            <summary class="us-label-summary">🇺🇸 美國處方藥仿單參考（openFDA）</summary>
+            <summary class="us-label-summary">🌐 美國處方藥仿單參考（openFDA）</summary>
             <div class="us-label-body" aria-live="polite">${body}</div>
         </details>`;
 }

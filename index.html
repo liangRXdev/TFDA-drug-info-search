@@ -459,6 +459,10 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 
 @media (max-width:640px) {
     h1 { font-size:1.375rem; }
+    /* 卡片＋區塊＋BW 框三層內距在手機上會把原文擠成約 210px 寬 */
+    .us-label { padding:.6rem .7rem; }
+    .us-label-bw { padding:.5rem .6rem; }
+    .us-label-text { max-height:260px; }
     .search-box { flex-direction:column; }
     #searchBtn { width:100%; }
     .drug-card { padding:1.25rem; }

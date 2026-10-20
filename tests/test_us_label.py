@@ -121,6 +121,22 @@ ORAL = lambda *ings: make_key("ORAL", ings)
     ("DEXTROSE HYDROUS", "DEXTROSE"),
     ("LYSINE L- HCL H2O", "LYSINE L-"),
     ("ESOMEPRAZOLE MAGNESIUM TRIHYDRATE", "ESOMEPRAZOLE"),
+    # T2a 括號攤平（含 TFDA 的「(AS 鹽類)」寫法；酯類攤平後仍保留）
+    ("GENTAMICIN (AS SULFATE)", "GENTAMICIN"),
+    ("DICLOFENAC (AS SODIUM)", "DICLOFENAC"),
+    ("BETAMETHASONE (AS DIPROPIONATE)", "BETAMETHASONE DIPROPIONATE"),
+    ("BETAMETHASONE (AS VALERATE)", "BETAMETHASONE VALERATE"),
+    ("DEXAMETHASONE (AS SODIUM PHOSPHATE)", "DEXAMETHASONE SODIUM PHOSPHATE"),
+    ("VITAMIN A (PALMITATE)", "VITAMIN A PALMITATE"),
+    ("TENOFOVIR DISOPROXIL (AS FUMARATE)", "TENOFOVIR DISOPROXIL"),
+    # Phase 1 端到端實測補上的寫法（2026-10-20）
+    ("WARFARIN SODIUM CLATHRATE", "WARFARIN"),
+    ("ZOLPIDEM HEMITARTRATE", "ZOLPIDEM"),
+    ("PIRENZEPINE 2HCL", "PIRENZEPINE"),
+    ("METOCLOPRAMIDE (2HCL MONOHYDRATE)", "METOCLOPRAMIDE"),
+    ("RIVASTIGMINE HYDROGEN TARTRATE", "RIVASTIGMINE"),
+    ("ERYTHROMYCIN (ESTOLATE)", "ERYTHROMYCIN ESTOLATE"),
+    ("SODIUM HYDROGEN CARBONATE", "SODIUM HYDROGEN CARBONATE"),
     # T1 (EQ TO …)：取括號外
     ("ACETAMINOPHEN (EQ TO PARACETAMOL)", "ACETAMINOPHEN"),
     ("SODIUM BICARBONATE ( EQ TO SODIUM HYDROGEN CARBONATE)", "SODIUM BICARBONATE"),
@@ -138,8 +154,9 @@ def test_norm_ingredient_allowed_transforms(raw, expected):
     "CLINDAMYCIN PHOSPHATE", "HALOPERIDOL DECANOATE", "ESTRADIOL VALERATE",
     "METOPROLOL SUCCINATE", "PALIPERIDONE PALMITATE", "BETAMETHASONE DIPROPIONATE",
     "DEXAMETHASONE SODIUM PHOSPHATE", "MEDROXYPROGESTERONE ACETATE",
-    # 清單外修飾詞、T1 以外的括號
-    "METHIONINE DL-", "VITAMIN A (PALMITATE)", "ALUMINUM HYDROXIDE (DRIED GEL)",
+    # 清單外修飾詞、T1 以外的括號（含拼錯的鹽類詞、多重說明）
+    "METHIONINE DL-", "ALUMINUM HYDROXIDE (DRIED GEL)", "AMOXICILLIN (AS TRIHYDATE)",
+    "CEPHRADINE (AS MIXTURE OF CEPHRADINE AND ARGININE)", "ASCORBIC ACID (VIT C)",
 ])
 def test_norm_ingredient_preserves(raw):
     assert norm_ingredient(raw) == raw
@@ -433,6 +450,18 @@ def test_a4_pregnancy_old_format_fallback():
     src = label(["X"], pregnancy=["  "], teratogenic_effects=["Pregnancy Category X."])
     assert run(ORAL("X"), [src])["preg"] == {"st": "ok", "sec": "teratogenic_effects",
                                               "t": ["Pregnancy Category X."]}
+
+
+def test_a4_pregnancy_extracted_from_section_8_when_field_missing():
+    src = label(["WARFARIN SODIUM"], bw="BLEEDING", use_in_specific_populations=[USP])
+    assert run(ORAL("WARFARIN"), [src])["preg"] == {
+        "st": "ok", "sec": "8.1 Pregnancy", "t": ["8.1 Pregnancy Risk Summary Data are limited."]}
+    # pregnancy 欄位優先於擷取；擷取失敗才用舊格式 teratogenic_effects
+    both = label(["X"], pregnancy=["Field."], use_in_specific_populations=[USP])
+    assert run(ORAL("X"), [both])["preg"]["t"] == ["Field."]
+    no_end = label(["X"], use_in_specific_populations=["8.1 Pregnancy no end"],
+                   teratogenic_effects=["Category X."])
+    assert run(ORAL("X"), [no_end])["preg"]["sec"] == "teratogenic_effects"
 
 
 def test_a10_sections_only_from_rep():
