@@ -53,7 +53,9 @@
 - **只做正面陳述（G3）**：openFDA 約三成現行 Rx 仿單缺 `openfda.*` 結構化欄位而比對不到，「未找到 BW」**絕不可**改寫成「無 BW／未列 BW」
 - **成分比對是嚴格的**，與健保那套刻意寬鬆的 `ingredient_core()` 方向相反——不要互相沿用。酯類（PHOSPHATE、DECANOATE…）刻意不在剝除清單
 - **改轉換清單、狀態語義或途徑對照表 → 升 `MATCH_RULES_VERSION`**，並同步 `app.js` 的 `US_LABEL_RULES_VERSION`（有 pytest 擋）
-- **資料契約三處同步**：`us_label.py` `validate_result`、`app.js` `isValidUsLabelEntry`、`sw.js` `isValidUsLabelEntry`（`tests/us_label.spec.mjs` 比對前端與 SW 判定一致）
+- **資料契約三處同步**：`us_label.py` `validate_result`／`validate_output`、`app.js` 與 `sw.js` 的 `isValidUsLabelEntry`／`isValidUsLabelData`（SW 不能 import，刻意各寫一份）。改契約先改 `tests/fixtures/us_label_contract.json`，三方都跑同一批反例；`US_LABEL_RULES_VERSION` 在 `app.js`、`sw.js` 各有一份，有 pytest 擋
+- **「失敗＝上一版位元不變」有兩層**：`build_us_label.py` 先寫暫存檔、全部成功才替換；workflow 在仿單步驟非 success 時還原檔案（`tests/test_workflow.py` 釘住順序）。不要拿掉任一層
+- Section 8 子段擷取：起點只看緊鄰前文（仿單原文常漏打右括號），終點從起點算括號深度。改規則後用真實 bulk 重跑，比對前後差異
 - `us_label_data.json` 不含時間戳（否則每次建置都變、「無變動不 commit」失效）；建置時間記在 `data_version.json` 的 `usLabelGeneratedAt`
 
 ## 測試與 CI

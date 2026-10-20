@@ -51,26 +51,56 @@ function isValidDrugsData(data) {
   return Number(data?._meta?.totalRecords) > 0 && Array.isArray(data?.data);
 }
 
-// 美國仿單參考：與 app.js 的 isValidUsLabelEntry、us_label.py 的 validate_result
-// 為同一份資料契約（docs/plan-us-label.md §6.3）。三處須同步修改。
+// 美國仿單參考：與 app.js 同名函式、us_label.py 的 validate_result／validate_output
+// 為同一份資料契約（docs/plan-us-label.md §6.3）。SW 與頁面無法共用程式碼，三處須同步修改；
+// tests/fixtures/us_label_contract.json 的反例三方都跑（Codex 審查 CR1／CR2）
+const US_LABEL_RULES_VERSION = 1;   // 須與 us_label.py MATCH_RULES_VERSION、app.js 同值（pytest 擋）
 const US_LABEL_STATES = new Set(['bw', 'nobw', 'nomatch', 'unavailable']);
+const US_PREG_SECTIONS = new Set(['pregnancy', '8.1 Pregnancy', 'teratogenic_effects']);
+const US_LACT_SECTIONS = new Set(['8.2 Lactation', 'nursing_mothers']);
+const US_SOURCE_FIELDS = new Set(['id', 'v', 'name', 'mfr', 'app', 'eff']);
+const US_ENTRY_FIELDS = ['s', 'n', 'm', 'r', 'preg', 'lact'];
 
-function isValidUsLabelEntry(e) {
-  if (!e || typeof e !== 'object' || !US_LABEL_STATES.has(e.s)) return false;
-  if (e.s === 'nomatch' || e.s === 'unavailable') return Object.keys(e).length === 1;
-  if (!Number.isInteger(e.n) || !Number.isInteger(e.m) || !e.r || !e.r.id) return false;
-  if (e.s === 'bw') {
-    return e.m > 0 && e.m <= e.n && Array.isArray(e.bw) && e.bw.some(t => typeof t === 'string' && t.trim());
-  }
-  return e.m === 0 && !('bw' in e) && !('b' in e);
+const isPlainObject = o => !!o && typeof o === 'object' && !Array.isArray(o);
+const hasExactKeys = (o, keys) => Object.keys(o).length === keys.length && keys.every(k => k in o);
+const hasText = a => Array.isArray(a) && a.every(t => typeof t === 'string') && a.some(t => t.trim());
+
+function isValidUsSource(s) {
+  return isPlainObject(s) && Object.keys(s).every(k => US_SOURCE_FIELDS.has(k))
+    && Object.values(s).every(v => typeof v === 'string') && !!s.id;
 }
 
+function isValidUsSection(sec, names, extraStates) {
+  if (!isPlainObject(sec)) return false;
+  if (sec.st === 'ok') return hasExactKeys(sec, ['st', 'sec', 't']) && names.has(sec.sec) && hasText(sec.t);
+  return (sec.st === 'none' || extraStates.includes(sec.st)) && hasExactKeys(sec, ['st']);
+}
+
+function isValidUsLabelEntry(e) {
+  if (!isPlainObject(e) || !US_LABEL_STATES.has(e.s)) return false;
+  if (e.s === 'nomatch' || e.s === 'unavailable') return hasExactKeys(e, ['s']);
+  if (!Number.isInteger(e.n) || !Number.isInteger(e.m) || e.n < 1 || e.m < 0 || e.m > e.n) return false;
+  if (!isValidUsSource(e.r) || !isValidUsSection(e.preg, US_PREG_SECTIONS, [])
+      || !isValidUsSection(e.lact, US_LACT_SECTIONS, ['unextractable'])) return false;
+  if (e.s === 'bw') {
+    if ('b' in e && !isValidUsSource(e.b)) return false;
+    return e.m >= 1 && hasText(e.bw)
+      && Object.keys(e).every(k => US_ENTRY_FIELDS.includes(k) || k === 'bw' || k === 'b');
+  }
+  return e.m === 0 && hasExactKeys(e, US_ENTRY_FIELDS);
+}
+
+// 殘缺但每筆合法的檔案（_meta 宣稱 N 鍵、實際較少）也要拒收，否則會覆蓋完整的舊快取
 function isValidUsLabelData(data) {
-  const d = data?.data;
-  return Number.isInteger(data?._meta?.matchRulesVersion)
-    && !!d && typeof d === 'object' && !Array.isArray(d)
-    && Object.keys(d).length > 0
-    && Object.values(d).every(isValidUsLabelEntry);
+  const meta = data && data._meta, d = data && data.data;
+  if (!isPlainObject(meta) || !isPlainObject(d)) return false;
+  const vals = Object.values(d);
+  if (!vals.length || meta.matchRulesVersion !== US_LABEL_RULES_VERSION || meta.keys !== vals.length) return false;
+  if (!vals.every(isValidUsLabelEntry) || !isPlainObject(meta.counts)) return false;
+  const actual = { bw: 0, nobw: 0, nomatch: 0, unavailable: 0 };
+  vals.forEach(v => { actual[v.s]++; });
+  return hasExactKeys(meta.counts, Object.keys(actual))
+    && Object.keys(actual).every(s => meta.counts[s] === actual[s]);
 }
 
 // 每個資料檔各自的驗證與通知訊息。各檔獨立 single-flight：

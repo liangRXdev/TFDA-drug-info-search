@@ -600,17 +600,55 @@ const US_SECTION_NAMES = {
     '8.2 Lactation': '8.2 Lactation',
     'nursing_mothers': 'Nursing Mothers（舊格式）',
 };
+// ── 資料契約：與 sw.js 同名函式、us_label.py 的 validate_result／validate_output 為同一份，
+// 三處須同步；tests/fixtures/us_label_contract.json 的反例三方都跑（Codex 審查 CR1／CR2）
 const US_LABEL_STATES = new Set(['bw', 'nobw', 'nomatch', 'unavailable']);
+const US_PREG_SECTIONS = new Set(['pregnancy', '8.1 Pregnancy', 'teratogenic_effects']);
+const US_LACT_SECTIONS = new Set(['8.2 Lactation', 'nursing_mothers']);
+const US_SOURCE_FIELDS = new Set(['id', 'v', 'name', 'mfr', 'app', 'eff']);
+const US_ENTRY_FIELDS = ['s', 'n', 'm', 'r', 'preg', 'lact'];
 
-// 與 sw.js 的 isValidUsLabelEntry、us_label.py 的 validate_result 為同一份資料契約，三處須同步
+const isPlainObject = o => !!o && typeof o === 'object' && !Array.isArray(o);
+const hasExactKeys = (o, keys) => Object.keys(o).length === keys.length && keys.every(k => k in o);
+const hasText = a => Array.isArray(a) && a.every(t => typeof t === 'string') && a.some(t => t.trim());
+
+function isValidUsSource(s) {
+    return isPlainObject(s) && Object.keys(s).every(k => US_SOURCE_FIELDS.has(k))
+        && Object.values(s).every(v => typeof v === 'string') && !!s.id;
+}
+
+function isValidUsSection(sec, names, extraStates) {
+    if (!isPlainObject(sec)) return false;
+    if (sec.st === 'ok') return hasExactKeys(sec, ['st', 'sec', 't']) && names.has(sec.sec) && hasText(sec.t);
+    return (sec.st === 'none' || extraStates.includes(sec.st)) && hasExactKeys(sec, ['st']);
+}
+
 function isValidUsLabelEntry(e) {
-    if (!e || typeof e !== 'object' || !US_LABEL_STATES.has(e.s)) return false;
-    if (e.s === 'nomatch' || e.s === 'unavailable') return Object.keys(e).length === 1;
-    if (!Number.isInteger(e.n) || !Number.isInteger(e.m) || !e.r || !e.r.id) return false;
+    if (!isPlainObject(e) || !US_LABEL_STATES.has(e.s)) return false;
+    if (e.s === 'nomatch' || e.s === 'unavailable') return hasExactKeys(e, ['s']);
+    // ①② 都建立在 C 非空之上（§6.3）：N≥1
+    if (!Number.isInteger(e.n) || !Number.isInteger(e.m) || e.n < 1 || e.m < 0 || e.m > e.n) return false;
+    if (!isValidUsSource(e.r) || !isValidUsSection(e.preg, US_PREG_SECTIONS, [])
+        || !isValidUsSection(e.lact, US_LACT_SECTIONS, ['unextractable'])) return false;
     if (e.s === 'bw') {
-        return e.m > 0 && e.m <= e.n && Array.isArray(e.bw) && e.bw.some(t => typeof t === 'string' && t.trim());
+        if ('b' in e && !isValidUsSource(e.b)) return false;
+        return e.m >= 1 && hasText(e.bw)
+            && Object.keys(e).every(k => US_ENTRY_FIELDS.includes(k) || k === 'bw' || k === 'b');
     }
-    return e.m === 0 && !('bw' in e) && !('b' in e);
+    return e.m === 0 && hasExactKeys(e, US_ENTRY_FIELDS);
+}
+
+// 整份檔案：_meta 宣稱的鍵數與各狀態計數須與實際內容一致——殘缺但每筆合法的檔案也要拒收
+function isValidUsLabelData(data) {
+    const meta = data && data._meta, d = data && data.data;
+    if (!isPlainObject(meta) || !isPlainObject(d)) return false;
+    const vals = Object.values(d);
+    if (!vals.length || meta.matchRulesVersion !== US_LABEL_RULES_VERSION || meta.keys !== vals.length) return false;
+    if (!vals.every(isValidUsLabelEntry) || !isPlainObject(meta.counts)) return false;
+    const actual = { bw: 0, nobw: 0, nomatch: 0, unavailable: 0 };
+    vals.forEach(v => { actual[v.s]++; });
+    return hasExactKeys(meta.counts, Object.keys(actual))
+        && Object.keys(actual).every(s => meta.counts[s] === actual[s]);
 }
 
 // set_id 須為 UUID 才產生連結：資料若被污染，最多是不出現連結
@@ -738,10 +776,9 @@ function fetchUsLabelData() {
                 return r.json();
             })
             .then(json => {
-                const d = json && json.data;
-                if (json?._meta?.matchRulesVersion !== US_LABEL_RULES_VERSION
-                    || drugsMeta.usLabelRulesVersion !== US_LABEL_RULES_VERSION
-                    || !d || typeof d !== 'object' || Array.isArray(d)) {
+                // 整份檔案層級的問題（版本不符、殘缺、違約）丟出錯誤：不快取，下次展開可重試。
+                // 單一鍵缺失則是資料狀態，由 loadUsLabelInto 顯示不可用（Codex 審查 CR4）
+                if (drugsMeta.usLabelRulesVersion !== US_LABEL_RULES_VERSION || !isValidUsLabelData(json)) {
                     throw new Error('美國仿單資料版本或格式不符');
                 }
                 return json;

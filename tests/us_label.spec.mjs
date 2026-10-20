@@ -24,7 +24,6 @@ const SETID_B = '9f8e7d6c-1111-2222-3333-444455556666';
 
 let win;
 let usLabelResponse = () => Promise.reject(new Error('not set'));
-let usLabelCalls = 0;
 
 const jsonResp = (obj, init = {}) => ({
   ok: init.status ? init.status < 400 : true,
@@ -34,23 +33,30 @@ const jsonResp = (obj, init = {}) => ({
 
 const src = (id, extra = {}) => ({ id, v: '3', name: 'COUMADIN', mfr: 'BMS', app: 'NDA009218', eff: '20250115', ...extra });
 
-const DATA = {
-  _meta: { matchRulesVersion: RULES, openfdaExportDate: '2026-10-16' },
-  data: {
-    'ORAL|WARFARIN': { s: 'bw', n: 3, m: 2, r: src(SETID), bw: ['WARNING: BLEEDING RISK\nMajor bleeding.'],
-      preg: { st: 'ok', sec: 'pregnancy', t: ['8.1 Pregnancy Risk Summary', 'Contraindicated.'] },
-      lact: { st: 'ok', sec: '8.2 Lactation', t: ['8.2 Lactation Risk Summary ...'] } },
-    'ORAL|X': { s: 'bw', n: 3, m: 1, r: src(SETID), b: src(SETID_B, { name: 'GENERIC X', app: 'ANDA1' }),
-      bw: ['B SOURCE BW'], preg: { st: 'none' }, lact: { st: 'unextractable' } },
-    'ORAL|AMLODIPINE': { s: 'nobw', n: 5, m: 0, r: src(SETID, { name: 'NORVASC' }),
-      preg: { st: 'none' }, lact: { st: 'ok', sec: 'nursing_mothers', t: ['Old format.'] } },
-    'TOPICAL|NOTHING': { s: 'nomatch' },
-    'ORAL|DOWN': { s: 'unavailable' },
-    'ORAL|BROKEN': { s: 'nobw', n: 1, m: 0, r: src(SETID), bw: ['should not be here'] },
-  },
-};
+// 依資料契約自動補上 _meta.keys／counts（殘缺檔驗證會核對這兩項）
+function withMeta(data, meta = {}) {
+  const counts = { bw: 0, nobw: 0, nomatch: 0, unavailable: 0 };
+  Object.values(data).forEach(v => { counts[v.s]++; });
+  return { _meta: { matchRulesVersion: RULES, openfdaExportDate: '2026-10-16',
+    keys: Object.keys(data).length, counts, ...meta }, data };
+}
 
-before(async () => {
+const DATA = withMeta({
+  'ORAL|WARFARIN': { s: 'bw', n: 3, m: 2, r: src(SETID), bw: ['WARNING: BLEEDING RISK\nMajor bleeding.'],
+    preg: { st: 'ok', sec: 'pregnancy', t: ['8.1 Pregnancy Risk Summary', 'Contraindicated.'] },
+    lact: { st: 'ok', sec: '8.2 Lactation', t: ['8.2 Lactation Risk Summary ...'] } },
+  'ORAL|X': { s: 'bw', n: 3, m: 1, r: src(SETID), b: src(SETID_B, { name: 'GENERIC X', app: 'ANDA1' }),
+    bw: ['B SOURCE BW'], preg: { st: 'none' }, lact: { st: 'unextractable' } },
+  'ORAL|AMLODIPINE': { s: 'nobw', n: 5, m: 0, r: src(SETID, { name: 'NORVASC' }),
+    preg: { st: 'none' }, lact: { st: 'ok', sec: 'nursing_mothers', t: ['Old format.'] } },
+  'TOPICAL|NOTHING': { s: 'nomatch' },
+  'ORAL|DOWN': { s: 'unavailable' },
+});
+
+const CONTRACT = JSON.parse(readFileSync(join(here, 'fixtures', 'us_label_contract.json'), 'utf-8'));
+
+// 建立一個載入 app.js 的 jsdom window；us_label_data.json 的回應由 respond() 決定
+async function makeWindow(respond, counter) {
   const html = readFileSync(join(root, 'index.html'), 'utf-8');
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
@@ -65,16 +71,23 @@ before(async () => {
           return Promise.resolve(jsonResp({ generatedAt: '2026-10-20T00:00:00', usLabelGeneratedAt: '2026-10-20T00:00:00' }));
         }
         if (u.endsWith('us_label_data.json')) {
-          usLabelCalls++;
-          return usLabelResponse();
+          counter.n++;
+          return respond();
         }
         return Promise.reject(new Error('unexpected ' + u));
       };
     },
   });
-  win = dom.window;
-  win.eval(readFileSync(join(root, 'app.js'), 'utf-8'));
-  await win.initDatabase();
+  const w = dom.window;
+  w.eval(readFileSync(join(root, 'app.js'), 'utf-8'));
+  await w.initDatabase();
+  return w;
+}
+
+const callCounter = { n: 0 };
+
+before(async () => {
+  win = await makeWindow(() => usLabelResponse(), callCounter);
 });
 
 function mountCard(drug) {
@@ -127,8 +140,14 @@ describe('載入失敗 → 不可用（B4）', () => {
     ['404', () => Promise.resolve(jsonResp({}, { status: 404 }))],
     ['非 JSON', () => Promise.resolve({ ok: true, status: 200, json: async () => { throw new SyntaxError('x'); } })],
     ['網路錯誤', () => Promise.reject(new TypeError('offline'))],
-    ['規則版本不符', () => Promise.resolve(jsonResp({ ...DATA, _meta: { matchRulesVersion: RULES + 1 } }))],
+    ['規則版本不符', () => Promise.resolve(jsonResp(withMeta(DATA.data, { matchRulesVersion: RULES + 1 })))],
     ['data 為陣列', () => Promise.resolve(jsonResp({ _meta: { matchRulesVersion: RULES }, data: [] }))],
+    ['data 為空物件', () => Promise.resolve(jsonResp(withMeta({})))],
+    // Codex CR2：每筆都合法、但 _meta 宣稱的鍵數多於實際（殘缺檔）
+    ['殘缺檔（宣稱鍵數多於實際）', () => Promise.resolve(jsonResp({ ...DATA, _meta: { ...DATA._meta, keys: 99 } }))],
+    // 整份檔案只要一筆違約就整份拒收
+    ['含一筆違約條目（② 卻帶 BW）', () => Promise.resolve(jsonResp(withMeta({ ...DATA.data,
+      'ORAL|BROKEN': { s: 'nobw', n: 1, m: 0, r: src(SETID), bw: ['should not be here'], preg: { st: 'none' }, lact: { st: 'none' } } })))],
   ];
   for (const [name, resp] of cases) {
     test(name, async () => {
@@ -151,6 +170,22 @@ describe('載入失敗 → 不可用（B4）', () => {
     assert.match(text(d), /WARNING: BLEEDING RISK/);
     assert.equal(d.dataset.usReady, '1');
   });
+  test('整份檔案無效後再展開且資料已修復 → 重新下載並成功（Codex CR4）', async () => {
+    // 主 window 已快取成功結果，改用新 window 重現「先拿到無效檔、伺服器修復後再展開」
+    const counter = { n: 0 };
+    let body = withMeta({});
+    const w = await makeWindow(() => Promise.resolve(jsonResp(body)), counter);
+    const div = w.document.createElement('div');
+    div.innerHTML = w.buildCard({ licenseNumber: 'X', usLabelKey: 'ORAL|WARFARIN' }, '');
+    const d = div.querySelector('details.us-label');
+    await w.loadUsLabelInto(d);
+    assert.match(text(d), /暫時無法提供/);
+    body = DATA;
+    await w.loadUsLabelInto(d);
+    assert.equal(counter.n, 2, '無效檔不得被快取成成功');
+    assert.match(text(d), /WARNING: BLEEDING RISK/);
+  });
+
 });
 
 // ── 成功後的呈現（資料檔已快取）──────────────────────────────────
@@ -203,12 +238,6 @@ describe('呈現（A2、A9、§6.4）', () => {
     assert.doesNotMatch(text(d), /Boxed Warning/);
   });
 
-  test('違反資料契約的條目（② 卻帶 BW）→ 不可用，不顯示 BW', async () => {
-    const d = await openSection({ usLabelKey: 'ORAL|BROKEN' });
-    assert.match(text(d), /暫時無法提供/);
-    assert.doesNotMatch(text(d), /should not be here/);
-  });
-
   test('原型鍵不會讀到 Object.prototype', async () => {
     const d = await openSection({ usLabelKey: '__proto__' });
     assert.match(text(d), /暫時無法提供/);
@@ -228,10 +257,35 @@ describe('併發與身分隔離（§8.2、B4）', () => {
   });
 
   test('成功後不重複下載資料檔', async () => {
-    const before = usLabelCalls;
+    const before = callCounter.n;
     await openSection({ usLabelKey: 'ORAL|WARFARIN' });
     await openSection({ usLabelKey: 'ORAL|AMLODIPINE' });
-    assert.equal(usLabelCalls, before);
+    assert.equal(callCounter.n, before);
+  });
+
+  test('冷啟動：資料尚未載入時兩卡同時展開，只下載一次，且各自顯示自己的鍵（Codex T4）', async () => {
+    const counter = { n: 0 };
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const w = await makeWindow(() => gate.then(() => jsonResp(DATA)), counter);
+    const mk = key => {
+      const div = w.document.createElement('div');
+      div.innerHTML = w.buildCard({ licenseNumber: 'X', usLabelKey: key }, '');
+      w.document.getElementById('resultsContainer').appendChild(div);
+      return div.querySelector('details.us-label');
+    };
+    const a = mk('ORAL|WARFARIN'), b = mk('ORAL|AMLODIPINE'), gone = mk('ORAL|X');
+    const pending = [w.loadUsLabelInto(a), w.loadUsLabelInto(b), w.loadUsLabelInto(gone)];
+    gone.closest('div').remove();          // 回應期間切換搜尋：卡片被移除
+    assert.equal(counter.n, 1, '回應前就應合併成一次請求');
+    release();
+    await Promise.all(pending);
+    assert.equal(counter.n, 1);
+    assert.match(text(a), /BLEEDING/);
+    assert.doesNotMatch(text(a), /NORVASC/);
+    assert.match(text(b), /NORVASC/);
+    assert.doesNotMatch(text(b), /BLEEDING/);
+    assert.equal(w.document.querySelectorAll('details.us-label').length, 2);
   });
 
   test('點擊 summary 觸發載入（事件委派，無 inline handler）', async () => {
@@ -251,11 +305,13 @@ describe('惡意資料（C1–C3）', () => {
   const evil = '<img src=x onerror=alert(1)><script>alert(2)</script>';
   const evilSrc = { id: 'javascript:alert(1)', v: evil, name: evil, mfr: evil, app: evil, eff: evil };
   const entry = { s: 'bw', n: 2, m: 1, r: evilSrc, b: { ...evilSrc, id: `${SETID}"onmouseover="x` },
-    bw: [evil, 'javascript:alert(3)'], preg: { st: 'ok', sec: evil, t: [evil] },
+    bw: [evil, 'javascript:alert(3)'], preg: { st: 'ok', sec: 'pregnancy', t: [evil] },
     lact: { st: 'ok', sec: 'nursing_mothers', t: [evil] } };
 
   let div;
   before(() => {
+    // 惡意內容全部是合法字串，須通過資料契約才能真的走到渲染（否則只是測到「不可用」）
+    assert.equal(win.isValidUsLabelEntry(entry), true);
     div = win.document.createElement('div');
     div.innerHTML = win.renderUsLabel(entry, `ORAL|${evil}`, { openfdaExportDate: evil });
   });
@@ -314,22 +370,9 @@ describe('sw.js 驗證函式（B5）', () => {
   const resp = (body, ctype = 'application/json') => new Response(
     typeof body === 'string' ? body : JSON.stringify(body), { headers: { 'Content-Type': ctype } });
 
-  test('合法資料 → 接受', async () => {
-    // 整份檔案只要有一個條目違反契約（ORAL|BROKEN）就整份拒絕，保留舊快取
-    assert.equal(await sw.isValidDataResponse(resp(DATA), sw.isValidUsLabelData), false);
-    const ok = { _meta: { matchRulesVersion: 1 }, data: { 'ORAL|WARFARIN': DATA.data['ORAL|WARFARIN'], 'TOPICAL|NOTHING': { s: 'nomatch' } } };
-    assert.equal(await sw.isValidDataResponse(resp(ok), sw.isValidUsLabelData), true);
-  });
-
-  test('HTML 的 200、狀態與內容矛盾、缺來源、空資料 → 拒絕', async () => {
-    const bad = [
-      [resp('<html>error</html>', 'text/html')],
-      [resp({ _meta: { matchRulesVersion: 1 }, data: { k: { s: 'nobw', n: 1, m: 0, r: { id: 'x' }, bw: ['x'] } } })],
-      [resp({ _meta: { matchRulesVersion: 1 }, data: { k: { s: 'bw', n: 1, m: 1, bw: ['x'] } } })],
-      [resp({ _meta: { matchRulesVersion: 1 }, data: {} })],
-      [resp({ _meta: {}, data: { k: { s: 'nomatch' } } })],
-    ];
-    for (const [r] of bad) assert.equal(await sw.isValidDataResponse(r, sw.isValidUsLabelData), false);
+  test('合法資料 → 接受；HTML 的 200 → 拒絕', async () => {
+    assert.equal(await sw.isValidDataResponse(resp(DATA), sw.isValidUsLabelData), true);
+    assert.equal(await sw.isValidDataResponse(resp('<html>error</html>', 'text/html'), sw.isValidUsLabelData), false);
   });
 
   test('主資料驗證行為不變', async () => {
@@ -345,9 +388,20 @@ describe('sw.js 驗證函式（B5）', () => {
     assert.equal(sw.dataFileOf(u('/x/evil_us_label_data.json')), null);
   });
 
-  test('前端與 SW 的條目驗證對同一批案例判定一致', () => {
-    const cases = [...Object.values(DATA.data), null, {}, { s: 'nomatch', n: 1 },
-      { s: 'bw', n: 1, m: 2, r: { id: 'x' }, bw: ['t'] }, { s: 'bw', n: 1, m: 1, r: { id: 'x' }, bw: ['  '] }];
-    for (const c of cases) assert.equal(sw.isValidUsLabelEntry(c), win.isValidUsLabelEntry(c), JSON.stringify(c));
+  // 共用反例：pytest 以同一份檔案驗 us_label.py，三方判定必須與預期一致（Codex CR1／CR2）
+  for (const c of CONTRACT.entries) {
+    test(`契約條目：${c.name}`, () => {
+      assert.equal(win.isValidUsLabelEntry(c.value), c.valid, 'app.js');
+      assert.equal(sw.isValidUsLabelEntry(c.value), c.valid, 'sw.js');
+    });
+  }
+  for (const c of CONTRACT.files) {
+    test(`契約整份：${c.name}`, async () => {
+      assert.equal(win.isValidUsLabelData(c.value), c.valid, 'app.js');
+      assert.equal(await sw.isValidDataResponse(resp(c.value), sw.isValidUsLabelData), c.valid, 'sw.js');
+    });
+  }
+  test('測試用的 DATA 本身符合契約（否則其他測試只是在測「不可用」）', () => {
+    assert.equal(win.isValidUsLabelData(DATA), true);
   });
 });

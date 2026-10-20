@@ -497,6 +497,35 @@ def test_extract_lactation_spans_array_elements():
         "8.2 Lactation\nRisk Summary y."
 
 
+@pytest.mark.parametrize("ref", [
+    "(see 8.3 Females and Males of Reproductive Potential)",
+    "[see Use in Specific Populations (8.3 Females and Males)]",
+    "( 8.4 Pediatric Use )",
+])
+def test_extract_lactation_skips_headed_cross_references(ref):
+    # Codex CR5：括號內帶標題字的交叉引用曾被當成終點，回傳截斷片段
+    t = f"8.1 Pregnancy x. 8.2 Lactation Risk Summary A {ref}. IMPORTANT TAIL. 8.4 Pediatric Use z."
+    assert extract_lactation([t]) == f"8.2 Lactation Risk Summary A {ref}. IMPORTANT TAIL."
+
+
+def test_extract_lactation_start_inside_brackets_is_ignored():
+    # Highlights 的「(8.2 Lactation)」不是章節起點；真正的起點在後面
+    t = "Highlights (8.2 Lactation) x. 8.2 Lactation Real body. 8.3 Females y."
+    assert extract_lactation([t]) == "8.2 Lactation Real body."
+
+
+def test_extract_lactation_not_blocked_by_typo_bracket_before_start():
+    # 實測：pantoprazole 等仿單的 8.1 有漏打的右括號；不得因此讓 8.2 擷取失敗
+    t = ("8.1 Pregnancy Risk OR=1.12 ([95% CI 0.86, 1.45] typo. "
+         "8.2 Lactation Risk Summary Present in milk. 8.3 Females x.")
+    assert extract_lactation([t]) == "8.2 Lactation Risk Summary Present in milk."
+
+
+def test_extract_lactation_unclosed_bracket_fails_instead_of_truncating():
+    t = "8.2 Lactation Risk Summary A (see 8.3 Females and Males. 8.4 Pediatric Use z."
+    assert extract_lactation([t]) is None
+
+
 @pytest.mark.parametrize("usp", [
     ["8.1 Pregnancy x. 8.2 Lactation Risk Summary y. no end heading"],   # 沒有終點
     ["8.1 Pregnancy x. Lactation: see ( 8.2 ). 8.4 Pediatric Use z."],  # 沒有起點
@@ -536,10 +565,39 @@ def test_rules_version_is_positive_int():
     assert isinstance(MATCH_RULES_VERSION, int) and MATCH_RULES_VERSION >= 1
 
 
-def test_frontend_rules_version_in_sync():
-    # 前端常數與 Python 規則版本不同步 → 所有卡片永遠顯示「不可用」（或更糟：跨代誤讀）
+@pytest.mark.parametrize("js", ["app.js", "sw.js"])
+def test_frontend_rules_version_in_sync(js):
+    # 前端／SW 常數與 Python 規則版本不同步 → 所有卡片永遠顯示「不可用」，或 SW 拒收新檔（或更糟：跨代誤讀）
     import re
     from pathlib import Path
-    src = (Path(__file__).resolve().parent.parent / "app.js").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / js).read_text(encoding="utf-8")
     m = re.search(r"const US_LABEL_RULES_VERSION = (\d+);", src)
     assert m and int(m.group(1)) == MATCH_RULES_VERSION
+
+
+# ── 共用資料契約反例（與 app.js／sw.js 跑同一批，Codex 審查 CR1／CR2）──────────
+import json as _json
+from pathlib import Path as _Path
+
+from us_label import validate_output
+
+_CONTRACT = _json.loads((_Path(__file__).resolve().parent / "fixtures" / "us_label_contract.json")
+                        .read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", _CONTRACT["entries"], ids=lambda c: c["name"])
+def test_contract_entry(case):
+    assert validate_result(case["value"]) is case["valid"]
+
+
+@pytest.mark.parametrize("case", _CONTRACT["files"], ids=lambda c: c["name"])
+def test_contract_file(case):
+    assert validate_output(case["value"]) is case["valid"]
+
+
+def test_real_compute_results_satisfy_strict_contract():
+    # 收緊後的契約不得拒收 compute_result 的正常產出（避免驗證比產生端還嚴而整批中止）
+    pool = [label(["X"], app="NDA1", bw="BW", pregnancy=["P"], use_in_specific_populations=[USP]),
+            label(["X"], nursing_mothers=["N"])]
+    for key, labels in ((ORAL("X"), pool), (ORAL("X"), [pool[1]]), (ORAL("Y"), pool)):
+        assert validate_result(compute_result(key, labels))

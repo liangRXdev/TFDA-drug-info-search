@@ -37,6 +37,7 @@ from us_label import (
     compute_result,
     index_by_ingredients,
     parse_key,
+    validate_output,
     validate_result,
 )
 
@@ -44,7 +45,9 @@ MANIFEST_URL = "https://api.fda.gov/download.json"
 DRUGS_FILE = "drugs_data.json"
 OUTPUT_FILE = "us_label_data.json"
 VERSION_FILE = "data_version.json"
-DEADLINE_SEC = 20 * 60          # 規格 D12：硬性時限；workflow 另設 step timeout 兜底
+# 規格 D12：硬性時限。刻意短於 workflow 的 step timeout（20 分），讓程式自己先中止、
+# 不寫檔，而不是在寫入途中被強制終止（Codex 審查 CR7）
+DEADLINE_SEC = 17 * 60
 TIMEOUT_SEC = 300
 MAX_RETRIES = 3
 RETRY_BASE_SEC = 10
@@ -66,6 +69,9 @@ class Deadline:
     def check(self, where):
         if self.clock() > self.end:
             raise Abort(f"超過時限（{where}）")
+
+    def remaining(self):
+        return max(0.0, self.end - self.clock())
 
 
 def load_keys(drugs):
@@ -124,11 +130,15 @@ def read_part(path, expected):
     return slim_rx(results)
 
 
-def http_get(url, dest=None):
-    """GET 並重試暫時性錯誤；4xx（429 除外）不重試。dest 給檔案路徑時串流寫入。"""
+def http_get(url, dest=None, deadline=None):
+    """GET 並重試暫時性錯誤；4xx（429 除外）不重試。dest 給檔案路徑時串流寫入。
+    給 deadline 時，每次嘗試前先檢查時限，單次逾時也不超過剩餘時間。"""
     for attempt in range(1, MAX_RETRIES + 1):
+        if deadline is not None:
+            deadline.check(f"下載 {url.rsplit('/', 1)[-1]}")
+        timeout = TIMEOUT_SEC if deadline is None else max(1.0, min(TIMEOUT_SEC, deadline.remaining()))
         try:
-            resp = requests.get(url, timeout=TIMEOUT_SEC, stream=dest is not None,
+            resp = requests.get(url, timeout=timeout, stream=dest is not None,
                                 headers={"User-Agent": "TFDA-DrugSearch/1.0"})
             if resp.status_code != 200:
                 retryable = resp.status_code == 429 or resp.status_code >= 500
@@ -191,62 +201,102 @@ def build_output(keys, labels, export_date, total):
         "keys": len(keys),
         "counts": {s: counts.get(s, 0) for s in sorted(RESULT_STATES)},
     }
-    return {"_meta": meta, "data": data}
+    out = {"_meta": meta, "data": data}
+    # 前端與 SW 用同一組條件驗證整份檔案；不一致的檔案寫出去只會被拒收
+    if not validate_output(out):
+        raise Abort("整份輸出違反資料契約（_meta 與內容不一致，程式錯誤）")
+    return out
 
 
-def write_atomic(path, obj):
-    d = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".us_label_", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
-
-
-def stamp_version(path):
-    """在 data_version.json 記錄仿單資料建置時間（us_label_data.json 本身不含時間戳，
+def version_text(path):
+    """data_version.json 加上仿單建置時間（us_label_data.json 本身不含時間戳，
     否則每次建置必然變動，workflow 的「無變動不 commit」會失效）。"""
     try:
         with open(path, encoding="utf-8") as f:
             v = json.load(f)
+        if not isinstance(v, dict):
+            v = {}
     except (OSError, json.JSONDecodeError):
         v = {}
     v["usLabelGeneratedAt"] = datetime.now().isoformat()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(v, f, ensure_ascii=False, indent=2)
+    return json.dumps(v, ensure_ascii=False, indent=2)
 
 
-def summarize(out):
+def publish(files):
+    """[(路徑, 內容)]：先全部寫成暫存檔，全部成功後才依序 os.replace。
+
+    兩次 replace 之間若失敗，第一個檔已替換——由 workflow 在本步驟非 success 時
+    還原 us_label_data.json 兜底（Codex 審查 CR3）。仿單檔排在前面：部分失敗時
+    最多是「新仿單、舊建置時間」，經 workflow 還原後即回到一致的上一版。"""
+    temps = []
+    try:
+        for path, text in files:
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)),
+                                       prefix=".us_label_", suffix=".tmp")
+            temps.append(tmp)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+        for (path, _), tmp in zip(files, temps):
+            os.replace(tmp, path)
+    except OSError as e:
+        raise Abort(f"寫檔失敗：{type(e).__name__}: {e}")
+    finally:
+        for tmp in temps:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+def item_counts(drugs, data):
+    """品項層級分布（規格 §7、D3）：有鍵者依該鍵結果，其餘依 usLabelStatus。"""
+    c = Counter()
+    for d in drugs.get("data") or []:
+        k = d.get("usLabelKey")
+        c[data[k]["s"] if k else (d.get("usLabelStatus") or "missing")] += 1
+    return c
+
+
+def write_summary(text):
+    """job summary 只是報表；寫不進去不得影響已完成的發布。"""
+    print(text)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    try:
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except OSError as e:
+        print(f"  ⚠  job summary 寫入失敗（資料已發布，不影響結果）：{e}", file=sys.stderr)
+
+
+def summarize(out, items):
     m = out["_meta"]
+    total = sum(items.values())
     lines = [
         "### 美國處方藥仿單參考",
         f"- openFDA export：{m['openfdaExportDate']}（label 共 {m['labelsTotal']:,}，Rx 結構化 {m['rxStructured']:,}）",
-        f"- 鍵：{m['keys']:,}",
-    ] + [f"  - {s}：{n:,}" for s, n in m["counts"].items()]
-    text = "\n".join(lines)
-    print(text)
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a", encoding="utf-8") as f:
-            f.write(text + "\n")
+        f"- 鍵統計（{m['keys']:,} 鍵）：" + "、".join(f"{s} {n:,}" for s, n in m["counts"].items()),
+        f"- 品項統計（{total:,} 筆）：" + "、".join(f"{s} {n:,}" for s, n in sorted(items.items())),
+    ]
+    unavailable = items.get("unavailable", 0)
+    if total and unavailable / total > 0.05:
+        lines.append(f"- ⚠ 品項不可用 {unavailable / total:.1%}，超過 5%：依規格 D3 停止上線並人工裁決")
+    write_summary("\n".join(lines))
 
 
 def run(drugs_path, output_path, version_path, fetch_manifest, fetch_part, deadline):
     with open(drugs_path, encoding="utf-8") as f:
-        keys = load_keys(json.load(f))
+        drugs = json.load(f)
+    keys = load_keys(drugs)
     print(f"  鍵：{len(keys):,}")
     parts, total, export_date = parse_manifest(fetch_manifest())
     print(f"  openFDA export {export_date}：{len(parts)} 檔，共 {total:,} 筆")
     labels = collect_labels(parts, deadline, fetch_part)
     deadline.check("計算前")
     out = build_output(keys, labels, export_date, total)
-    write_atomic(output_path, out)
-    stamp_version(version_path)
-    summarize(out)
+    payload = json.dumps(out, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    deadline.check("寫入前")
+    publish([(output_path, payload), (version_path, version_text(version_path))])
+    summarize(out, item_counts(drugs, out["data"]))
     return out
 
 
@@ -259,13 +309,14 @@ def main(argv=None):
     print(f"  美國處方藥仿單參考｜{datetime.now():%Y-%m-%d %H:%M:%S}")
     print("=" * 60)
     tmpdir = tempfile.mkdtemp(prefix="us_label_")
+    deadline = Deadline(DEADLINE_SEC)
 
     def fetch_part(url):
         name = url.rsplit("/", 1)[-1]
         if args.parts_dir:
             return os.path.join(args.parts_dir, name)
         dest = os.path.join(tmpdir, name)
-        http_get(url, dest)
+        http_get(url, dest, deadline)
         return dest
 
     def fetch_part_and_clean(url):
@@ -276,11 +327,12 @@ def main(argv=None):
 
     try:
         run(DRUGS_FILE, OUTPUT_FILE, VERSION_FILE,
-            fetch_manifest=lambda: http_get(MANIFEST_URL),
+            fetch_manifest=lambda: http_get(MANIFEST_URL, deadline=deadline),
             fetch_part=fetch_part_and_clean,
-            deadline=Deadline(DEADLINE_SEC))
+            deadline=deadline)
     except Abort as e:
         print(f"\n✗  中止，保留上一版 {OUTPUT_FILE}：{e}", file=sys.stderr)
+        write_summary(f"### 美國處方藥仿單參考\n- ✗ 本批中止，保留上一版：{e}")
         return 1
     finally:
         for old in os.listdir(tmpdir):

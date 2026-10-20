@@ -269,28 +269,55 @@ def source_info(r):
 
 
 # 自 Section 8（use_in_specific_populations）嚴格擷取子章節：起點為「8.n 標題」，
-# 終點為之後第一個「8.x 英文標題字」（x≠n）。括號內交叉引用「( 8.3 )」後面不接標題字，
-# 自然不會被當成終點。openFDA 對新格式（PLLR）仿單不一定拆出 pregnancy 欄位，
-# 也從不拆出 lactation 欄位（2026-10-20 實測 0 筆）。
-_SECTION_HEAD_RE = re.compile(r"(?<![(\d.])\b8\.(\d{1,2})\s+[A-Z][A-Za-z]")
+# 終點為之後第一個「8.x 英文標題字」（x≠n）。起點與終點都不得位於未閉合的括號內——
+# 交叉引用「(see 8.3 Females and Males …)」帶有標題字，只看前一字元擋不住，
+# 曾把截斷到一半的哺乳段當成擷取成功（Codex 審查 CR5）。
+# openFDA 對新格式（PLLR）仿單不一定拆出 pregnancy 欄位，也從不拆出 lactation 欄位
+# （2026-10-20 實測 0 筆）。
+_SECTION_HEAD_RE = re.compile(r"(?<![\d.])\b8\.(\d{1,2})\s+[A-Z][A-Za-z]")
 _SUBSECTION_START = {
     "1": re.compile(r"\b8\.1\s+Pregnancy\b", re.IGNORECASE),
     "2": re.compile(r"\b8\.2\s+Lactation\b", re.IGNORECASE),
 }
+_OPEN, _CLOSE = "([", ")]"
+
+
+def _bracket_depth(segment):
+    """片段結束時尚未閉合的 ( 與 [ 數；多出的閉括號不會把深度扣成負數。"""
+    depth = 0
+    for ch in segment:
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE and depth:
+            depth -= 1
+    return depth
+
+
+def _right_after_open_bracket(text, pos):
+    """pos 前面（略過空白）緊鄰的是 ( 或 [ → 這是交叉引用，不是章節標題。"""
+    before = text[:pos].rstrip()
+    return bool(before) and before[-1] in _OPEN
 
 
 def extract_subsection(usp, num):
-    """擷取 8.<num> 原文；無明確起訖 → None（不回傳截斷片段）。"""
+    """擷取 8.<num> 原文；無明確起訖或終點落在括號內 → None（不回傳截斷片段）。
+
+    起點只看緊鄰前文：仿單原文本身常有漏打的右括號（實測 pantoprazole 8.1 的
+    「OR=1.12 ([95% CI…」），若以全文累計深度判斷，前段的筆誤會讓真正的 8.2 起點被拒。
+    終點則從起點起算深度——落在本段括號內的候選一律跳過；本段自身括號不平衡 →
+    找不到終點 → 不可擷取（寧可不顯示，也不顯示截斷內容）。"""
     if not has_content(usp):
         return None
     text = "\n".join(usp)
-    start = _SUBSECTION_START[num].search(text)
+    start = next((m for m in _SUBSECTION_START[num].finditer(text)
+                  if not _right_after_open_bracket(text, m.start())), None)
     if not start:
         return None
     for m in _SECTION_HEAD_RE.finditer(text, start.end()):
-        if m.group(1) != num:
-            body = text[start.start():m.start()].strip()
-            return body or None
+        if m.group(1) == num or _bracket_depth(text[start.start():m.start()]) != 0:
+            continue
+        body = text[start.start():m.start()].strip()
+        return body or None
     return None
 
 
@@ -387,16 +414,67 @@ def compute_result(key, pool):
     return out
 
 
+# ── 資料契約（§6.3）─────────────────────────────────────────────
+# 與 app.js／sw.js 的 isValidUsLabelEntry、isValidUsLabelData 為同一份契約，三處須同步；
+# 共用反例在 tests/fixtures/us_label_contract.json，三方都跑同一批（Codex 審查 CR1／CR2）
+PREG_SECTIONS = {"pregnancy", "8.1 Pregnancy", "teratogenic_effects"}
+LACT_SECTIONS = {"8.2 Lactation", "nursing_mothers"}
+_SOURCE_FIELDS = {"id", "v", "name", "mfr", "app", "eff"}
+
+
+def _is_count(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _valid_source(src):
+    return (isinstance(src, dict) and set(src) <= _SOURCE_FIELDS
+            and all(isinstance(v, str) for v in src.values())
+            and bool(src.get("id")))
+
+
+def _valid_section(sec, sections, extra_states=()):
+    if not isinstance(sec, dict):
+        return False
+    st = sec.get("st")
+    if st == "ok":
+        return set(sec) == {"st", "sec", "t"} and sec["sec"] in sections and has_content(sec["t"])
+    return st in ("none",) + tuple(extra_states) and set(sec) == {"st"}
+
+
 def validate_result(res):
-    """資料契約不變條件（§6.3）。供 build_us_label.py 寫檔前自檢，與前端／SW 驗證對應。"""
+    """單一鍵結果的不變條件。供 build_us_label.py 寫檔前自檢。"""
     s = res.get("s") if isinstance(res, dict) else None
     if s not in RESULT_STATES:
         return False
     if s in (RESULT_NO_MATCH, RESULT_UNAVAILABLE):
         return set(res) == {"s"}
-    if not (isinstance(res.get("n"), int) and isinstance(res.get("m"), int)
-            and isinstance(res.get("r"), dict) and res["r"].get("id")):
+    n, m = res.get("n"), res.get("m")
+    # ①② 都建立在 C 非空之上（§6.3）：N≥1
+    if not (_is_count(n) and _is_count(m) and n >= 1 and 0 <= m <= n):
         return False
+    if not (_valid_source(res.get("r"))
+            and _valid_section(res.get("preg"), PREG_SECTIONS)
+            and _valid_section(res.get("lact"), LACT_SECTIONS, ("unextractable",))):
+        return False
+    allowed = {"s", "n", "m", "r", "preg", "lact"}
     if s == RESULT_BW:
-        return 0 < res["m"] <= res["n"] and has_content(res.get("bw"))
-    return res["m"] == 0 and "bw" not in res and "b" not in res
+        if "b" in res and not _valid_source(res["b"]):
+            return False
+        return m >= 1 and has_content(res.get("bw")) and set(res) <= allowed | {"bw", "b"}
+    return m == 0 and set(res) == allowed
+
+
+def validate_output(out):
+    """整份 us_label_data.json：_meta 宣稱的鍵數與各狀態計數須與實際內容一致。"""
+    meta = out.get("_meta") if isinstance(out, dict) else None
+    data = out.get("data") if isinstance(out, dict) else None
+    if not (isinstance(meta, dict) and isinstance(data, dict) and data):
+        return False
+    if meta.get("matchRulesVersion") != MATCH_RULES_VERSION or meta.get("keys") != len(data):
+        return False
+    if not all(validate_result(v) for v in data.values()):
+        return False
+    actual = {s: 0 for s in RESULT_STATES}
+    for v in data.values():
+        actual[v["s"]] += 1
+    return meta.get("counts") == actual
