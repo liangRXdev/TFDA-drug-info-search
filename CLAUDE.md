@@ -26,7 +26,7 @@
 
    **資料檔例外**：`drugs_data.json`、`us_label_data.json` 不進 install 預快取，走 `sw.js` 的 `DATA_FILES`（stale-while-revalidate、每檔各自的驗證函式與 single-flight 鎖）。新增資料檔要加進 `DATA_FILES`，不是 install 清單。
 
-2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v8`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
+2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v9`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
    **清舊快取只刪自家三個家族前綴**（`OWN_PREFIXES`）：`liangrxdev.github.io` 由所有專案頁共用 origin，Cache Storage 不依 SW scope 隔離，`!ALL_CACHES.includes(k)` 會刪光同網域其他工具的快取（2026-09-12 修正）。不要縮成 `'tfda-'`——TFDA-drug-id-quiz 的快取也以它開頭。
 
 3. **CSP 是 `<meta>` 標籤不是 `_headers`**。`script-src 'self'` 意味著**不能寫 inline `<script>` 或 inline event handler**（`onclick=` 等）——JS 一律進 `app.js`。這裡不需要算 hash（那是 pharmacy-portal 的做法）。
@@ -74,6 +74,7 @@ npm test                        # node --test：xss.spec.mjs（XSS 迴歸）＋ 
 - **預設搜尋範圍為「品名」**，非成分。成分檢索結果集顯著較大，預設成分會讓 ACETAMINOPHEN 這類常見成分的複方製劑稀釋掉品名查詢結果
 - 成分建議在「品名」範圍下**仍會出現**，作為切換範圍的捷徑；點選後範圍鈕同步變更——**不靜默改動結果集**
 - 搜尋索引在資料載入後建立一次，不要改成每次查詢重建
+- **ATC 範圍**（`docs/plan-atc-search.md`）：開頭相符；ATC 只來自健保資料，非健保品項永遠搜不到（結果上方固定說明，不可拿掉）；健保只登載到上層的代碼**不列入**、只提示（列入即可能誤配同類別別的藥）；「全部」範圍刻意不併入 ATC。結果用分組摘要表呈現，因卡片上限 30 筆
 
 ## 樣式
 
