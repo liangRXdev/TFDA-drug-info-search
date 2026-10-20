@@ -24,7 +24,7 @@ let drugDatabase = [];
 let drugsMeta    = {};          // drugs_data.json 的 _meta（含 usLabelRulesVersion）
 let versionInfo  = null;        // data_version.json（含 usLabelGeneratedAt）
 let currentFilter = 'nhi';      // 預設健保品項
-let currentScope  = 'name';      // 搜尋範圍：name / ingredient / both
+let currentScope  = 'name';      // 搜尋範圍：name / ingredient / atc / both
 let currentDosage = 'all';       // 劑型篩選
 let lastResults   = null;        // 快取上次搜尋結果以便切換篩選即時生效
 let lastKeyword   = '';          // 快取關鍵字供高亮使用
@@ -90,6 +90,7 @@ function buildIndexes() {
         d._chLower  = (d.chName || '').toLowerCase();
         d._enLower  = (d.enName || '').toLowerCase();
         d._ingLower = (d.ingredients || '').toLowerCase();
+        d._atcs     = drugAtcCodes(d);
 
         splitIngredients(d.ingredients).forEach(part => {
             // 去掉括號內的鹽類／型態，讓 suggest 收斂到主成分
@@ -108,17 +109,70 @@ function buildIndexes() {
     nameIndex = [...nameSet].map(name => ({ name, lower: name.toLowerCase() }));
 }
 
+// ── ATC 搜尋（docs/plan-atc-search.md）──────────────────────────
+// ATC 碼只來自健保署資料（nhiAtcCode／nhiMatches[].atcCode），非健保品項沒有 ATC。
+// 以「開頭相符」比對：C09 涵蓋整個 RAS 類、C09CA01 等同精確查詢。
+// 合法長度只有 1／3／4／5／7 碼（WHO ATC 五個層級）
+const ATC_PREFIX_RE = /^[A-Z](\d{2}([A-Z]([A-Z](\d{2})?)?)?)?$/;
+const ATC_SUGGEST_MIN = 3;          // 1 碼（解剖大類）太容易與品名縮寫重疊，不主動提示
+const ATC_FORMAT_HINT = 'ATC 格式例：C09、C09CA、C09CA01；查藥名請切換到品名或成分';
+const ATC_COVERAGE_NOTE = 'ATC 碼來自健保署資料，僅涵蓋健保品項；非健保品項請改用成分搜尋';
+
+let atcQuery   = '';     // 本次 ATC 搜尋的正規化代碼
+let atcGroup   = null;   // 摘要表選定的 7 碼（null = 全部）
+let atcPartial = [];     // ATC 只登載到比查詢更上層的品項（不列入結果，只提示）
+
+// 全形轉半形（NFKC）、去空白、轉大寫：「 ｃ０９ｃａ 」→「C09CA」
+function normalizeAtc(raw) {
+    return String(raw || '').normalize('NFKC').replace(/\s+/g, '').toUpperCase();
+}
+
+function isAtcPrefix(code) {
+    return ATC_PREFIX_RE.test(code);
+}
+
+// 同一許可證可對到多個健保代號、各有 ATC（實測 56 證不只一個）：全部納入比對
+function drugAtcCodes(d) {
+    const set = new Set();
+    const add = c => { const v = normalizeAtc(c); if (v) set.add(v); };
+    add(d.nhiAtcCode);
+    (d.nhiMatches || []).forEach(m => add(m.atcCode));
+    return [...set];
+}
+
+function atcMatches(d, q) {
+    return d._atcs.some(a => a.startsWith(q));
+}
+
+// 健保只登載到上層（如 C09CA）、查詢較深（C09CA01）：可能是同類別的別的藥，不列入
+function atcOnlyBroader(d, q) {
+    return !atcMatches(d, q) && d._atcs.some(a => a.length < q.length && q.startsWith(a));
+}
+
+// 品項在摘要表歸到哪一個代碼：優先主要代號，其餘取字典序第一個，使分組計數加總等於總筆數
+function atcGroupOf(d, q) {
+    const primary = normalizeAtc(d.nhiAtcCode);
+    if (primary.startsWith(q)) return primary;
+    return d._atcs.filter(a => a.startsWith(q)).sort()[0];
+}
+
 // ── Scope buttons ─────────────────────────────────────────────
+const SCOPE_PLACEHOLDER = {
+    'name':       '請輸入藥品中文品名或英文品名（例如：Norvasc、脈優）',
+    'ingredient': '請輸入成分英文名（例如：AMLODIPINE、METFORMIN）',
+    'atc':        '請輸入 ATC 碼（例如：C09、C09CA、C09CA01）',
+    'both':       '請輸入品名或成分（例如：脈優、AMLODIPINE）',
+};
+
+function setScope(scope) {
+    scopeBtns.forEach(b => b.classList.toggle('active', b.dataset.scope === scope));
+    currentScope = scope;
+    searchInput.placeholder = SCOPE_PLACEHOLDER[scope];
+}
+
 scopeBtns.forEach(btn => {
     btn.addEventListener('click', () => {
-        scopeBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentScope = btn.dataset.scope;
-        searchInput.placeholder = {
-            'name':       '請輸入藥品中文品名或英文品名（例如：Norvasc、脈優）',
-            'ingredient': '請輸入成分英文名（例如：AMLODIPINE、METFORMIN）',
-            'both':       '請輸入品名或成分（例如：脈優、AMLODIPINE）',
-        }[currentScope];
+        setScope(btn.dataset.scope);
         // 範圍改變會改變結果集本身，需重跑搜尋
         if (searchInput.value.trim()) searchDrugs();
     });
@@ -215,11 +269,33 @@ function searchDrugs() {
     if (!keyword) { showError('請輸入藥品名稱'); return; }
     if (drugDatabase.length === 0) { showError('資料庫尚未載入'); return; }
 
+    // ATC 範圍：格式不合就不搜尋——「losartan」在 ATC 範圍下 0 筆，會被誤讀成「沒有這類藥」
+    const atc = currentScope === 'atc' ? normalizeAtc(keyword) : '';
+    if (currentScope === 'atc' && !isAtcPrefix(atc)) {
+        showError(ATC_FORMAT_HINT);
+        lastResults = null;
+        resultsSection.classList.remove('active');
+        return;
+    }
+
     loading.classList.add('active');
     resultsSection.classList.remove('active');
     searchBtn.disabled = true;
 
     setTimeout(() => {
+        if (currentScope === 'atc') {
+            atcQuery   = atc;
+            atcGroup   = null;
+            lastKeyword = '';     // 卡片的品名／成分高亮與 ATC 無關
+            lastResults = drugDatabase.filter(d => atcMatches(d, atc));
+            atcPartial  = drugDatabase.filter(d => atcOnlyBroader(d, atc));
+            buildDosageBtns(lastResults);
+            loading.classList.remove('active');
+            searchBtn.disabled = false;
+            renderResults();
+            return;
+        }
+
         const lower = keyword.toLowerCase();
         lastKeyword = keyword;   // 供高亮使用
 
@@ -255,18 +331,33 @@ function applyFilter(arr) {
 function renderResults() {
     if (!lastResults) return;
 
-    const filtered = applyDosage(applyFilter(lastResults));
+    const isAtc = currentScope === 'atc';
+    const all = applyDosage(applyFilter(lastResults));
+    // 篩選改變後原選的代碼可能已無品項：回到全部，避免誤顯示「查無」
+    if (isAtc && atcGroup && !all.some(d => atcGroupOf(d, atcQuery) === atcGroup)) atcGroup = null;
+    // ATC 範圍：摘要表永遠以「目前篩選後的全部結果」計數，點選某列才縮小下方卡片
+    const filtered = isAtc && atcGroup ? all.filter(d => atcGroupOf(d, atcQuery) === atcGroup) : all;
 
-    // 排序：健保品項在前，原料藥在後
+    // 排序：健保品項在前，原料藥在後；ATC 範圍再依代碼排，同一成分的卡片相鄰
     filtered.sort((a, b) => {
         if (a.isNhi !== b.isNhi) return b.isNhi - a.isNhi;
         if (a.isRawMaterial !== b.isRawMaterial) return a.isRawMaterial - b.isRawMaterial;
+        if (isAtc) return atcGroupOf(a, atcQuery).localeCompare(atcGroupOf(b, atcQuery));
         return 0;
     });
 
     const limited = filtered.slice(0, 30);
+    const atcPanel = isAtc ? buildAtcPanel(all) : '';
 
-    if (limited.length === 0) {
+    if (limited.length === 0 && isAtc) {
+        resultsContainer.innerHTML = `${atcPanel}
+            <div class="no-results">
+                <div style="font-size:2.5rem;margin-bottom:.75rem">🏷️</div>
+                <h3 style="margin-bottom:.5rem">查無 ATC ${escapeHtml(atcQuery)} 的健保品項</h3>
+                <p style="color:var(--text-secondary)">${ATC_COVERAGE_NOTE}</p>
+            </div>`;
+        resultsMeta.textContent = '';
+    } else if (limited.length === 0) {
         resultsContainer.innerHTML = `
             <div class="no-results">
                 <div style="font-size:2.5rem;margin-bottom:.75rem">🔍</div>
@@ -279,16 +370,83 @@ function renderResults() {
             'nhi':'健保品項', 'all':'全部藥品', 'non-nhi':'未納健保', 'raw':'原料藥'
         }[currentFilter];
         const dosageLabel = currentDosage !== 'all' ? ` · 劑型：<strong>${currentDosage}</strong>` : '';
-        const scopeLabel = { 'name':'品名', 'ingredient':'成分', 'both':'品名＋成分' }[currentScope];
+        const scopeLabel = { 'name':'品名', 'ingredient':'成分', 'atc':'ATC', 'both':'品名＋成分' }[currentScope];
+        const atcLabel = isAtc
+            ? ` · ATC：<strong>${escapeHtml(atcGroup || atcQuery)}</strong>`
+            : '';
+        const tooMany = filtered.length > 30
+            ? (isAtc ? '（顯示前 30 筆，可點上方摘要表縮小到單一成分）' : '（顯示前 30 筆，請使用更精確的關鍵字）')
+            : '';
         resultsMeta.innerHTML = `
-            搜尋範圍：<strong>${scopeLabel}</strong> ·
+            搜尋範圍：<strong>${scopeLabel}</strong>${atcLabel} ·
             篩選範圍：<strong>${filterLabel}</strong>${dosageLabel} ·
             符合 ${filtered.length.toLocaleString()} 筆
-            ${filtered.length > 30 ? `（顯示前 30 筆，請使用更精確的關鍵字）` : ''}
+            ${tooMany}
         `;
-        resultsContainer.innerHTML = limited.map(d => buildCard(d, lastKeyword)).join('');
+        resultsContainer.innerHTML = atcPanel + limited.map(d => buildCard(d, lastKeyword)).join('');
     }
     resultsSection.classList.add('active');
+}
+
+// 摘要表的成分欄：去鹽類括號、複方以 + 連接。括號可能巢狀
+//（實測「TAK-491 (AZILSARTAN MEDOXOMIL (AS POTASSIUM SALT))」），由內往外逐層移除
+function stripParens(s) {
+    let prev;
+    do { prev = s; s = s.replace(/\([^()]*\)/g, ''); } while (s !== prev);
+    return s.replace(/\s+/g, ' ').trim();
+}
+
+function ingredientLabel(d) {
+    return splitIngredients(d.ingredients)
+        .map(p => stripParens(p).toUpperCase())
+        .filter(Boolean).join(' + ');
+}
+
+// ATC 範圍結果上方：固定的涵蓋範圍說明、上層代碼提示、依代碼分組的摘要表
+function buildAtcPanel(all) {
+    const partial = applyDosage(applyFilter(atcPartial));
+    const broader = [...new Set(partial.flatMap(d => d._atcs.filter(a => atcQuery.startsWith(a))))].sort();
+    const partialNote = partial.length
+        ? `<p class="atc-note atc-note-warn">另有 ${partial.length.toLocaleString()} 筆的健保 ATC 只登載到
+             ${broader.map(c => `<strong>${escapeHtml(c)}</strong>`).join('、')}，可能不是 ${escapeHtml(atcQuery)}，未列入；可改搜該代碼查看。</p>`
+        : '';
+
+    // 每個品項歸到一個代碼（atcGroupOf），各列計數加總等於目前篩選後的總筆數
+    const groups = new Map();
+    all.forEach(d => {
+        const code = atcGroupOf(d, atcQuery);
+        const g = groups.get(code) || { count: 0, labels: new Map() };
+        g.count++;
+        const label = ingredientLabel(d);
+        if (label) g.labels.set(label, (g.labels.get(label) || 0) + 1);
+        groups.set(code, g);
+    });
+    const rows = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([code, g]) => {
+        // 同一代碼可能有不同成分寫法：取最常見者
+        const label = [...g.labels.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
+        const active = code === atcGroup;
+        return `<tr>
+            <td><button type="button" class="atc-row${active ? ' active' : ''}" data-atc="${escapeHtml(code)}"
+                 aria-pressed="${active}">${escapeHtml(code)}</button></td>
+            <td>${escapeHtml(label)}</td>
+            <td class="atc-count">${g.count.toLocaleString()}</td>
+        </tr>`;
+    }).join('');
+
+    const table = groups.size ? `
+        <div class="atc-summary">
+            <div class="atc-summary-head">
+                <span>依 ATC 分組（共 ${groups.size} 個代碼、${all.length.toLocaleString()} 筆；點代碼只看該組）</span>
+                ${atcGroup ? '<button type="button" class="atc-row atc-clear" data-atc="">顯示全部</button>' : ''}
+            </div>
+            <div class="atc-table-wrap">
+                <table class="atc-table">
+                    <thead><tr><th>ATC</th><th>成分</th><th>品項</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>` : '';
+    return `<p class="atc-note">${ATC_COVERAGE_NOTE}</p>${partialNote}${table}`;
 }
 
 // ── Card Builder ──────────────────────────────────────────────
@@ -492,6 +650,14 @@ resultsContainer.addEventListener('click', e => {
     const copyBtn = e.target.closest('.copy-mini');
     if (copyBtn) {
         copyNhiCode(copyBtn.dataset.code || '', copyBtn);
+        return;
+    }
+    const atcRow = e.target.closest('.atc-row');
+    if (atcRow) {
+        // 再點一次已選的代碼 = 取消；「顯示全部」的 data-atc 為空字串
+        const code = atcRow.dataset.atc || null;
+        atcGroup = code === atcGroup ? null : code;
+        renderResults();
         return;
     }
     const usSummary = e.target.closest('.us-label-summary');
@@ -883,7 +1049,7 @@ function isPlaceholderUsage(text) {
 // ── Autosuggest ───────────────────────────────────────────────
 const SUGGEST_MIN_CHARS = 2;
 const SUGGEST_PER_GROUP = 5;
-let suggestions   = [];   // [{ type:'ingredient'|'name', text, count }]
+let suggestions   = [];   // [{ type:'atc'|'ingredient'|'name', text, count }]
 let suggestActive = -1;   // 鍵盤選取中的索引
 let suggestTimer  = null;
 
@@ -900,8 +1066,18 @@ function rankMatches(list, lower, limit) {
 }
 
 function buildSuggestions(keyword) {
+    // ATC 範圍不給品名／成分建議：點了會把藥名丟進 ATC 搜尋而得到格式錯誤
+    if (currentScope === 'atc') return [];
     const lower = keyword.toLowerCase();
     const out = [];
+
+    // 輸入長得像 ATC（≥3 碼且有命中）→ 提示「以 ATC 搜尋」，點選才切換範圍（不靜默改變結果集）。
+    // 「全部」範圍刻意不併入 ATC 比對：C09 這類短字串混入品名／成分結果會難以解讀
+    const atc = normalizeAtc(keyword);
+    if (atc.length >= ATC_SUGGEST_MIN && isAtcPrefix(atc)) {
+        const hits = drugDatabase.reduce((n, d) => n + (atcMatches(d, atc) ? 1 : 0), 0);
+        if (hits) out.push({ type:'atc', text:atc, count:hits });
+    }
 
     // 成分建議在「品名」範圍下也顯示：預設範圍是品名，若不給這條捷徑，
     // 使用者打成分名只會拿到品名恰好含該字串的少數幾筆而不自知。
@@ -922,7 +1098,7 @@ function renderSuggestions(keyword) {
     let html = '', lastType = null;
     suggestions.forEach((s, idx) => {
         if (s.type !== lastType) {
-            html += `<div class="suggest-group">${s.type === 'ingredient' ? '💊 成分' : '📦 品名'}</div>`;
+            html += `<div class="suggest-group">${{ atc:'🏷️ 以 ATC 搜尋', ingredient:'💊 成分' }[s.type] || '📦 品名'}</div>`;
             lastType = s.type;
         }
         const count = s.count ? `<span class="s-count">${s.count} 筆</span>` : '';
@@ -951,10 +1127,9 @@ function applySuggestion(idx) {
     if (!s) return;
     searchInput.value = s.text;
     // 點選成分時自動切到成分範圍，避免成分名以品名去搜而 0 筆
-    if (s.type === 'ingredient' && currentScope === 'name') {
-        scopeBtns.forEach(b => b.classList.toggle('active', b.dataset.scope === 'ingredient'));
-        currentScope = 'ingredient';
-    }
+    if (s.type === 'ingredient' && currentScope === 'name') setScope('ingredient');
+    // 點選 ATC 提示：明確切換範圍鈕到 ATC
+    if (s.type === 'atc') setScope('atc');
     closeSuggest();
     searchDrugs();
 }

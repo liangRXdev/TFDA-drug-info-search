@@ -421,6 +421,41 @@ footer a { color:var(--primary-blue); text-decoration:none; }
     padding:.5rem 0;
 }
 
+/* ATC 搜尋：說明列與分組摘要表（沿用既有 token；摘要表為導覽，不是臨床結論，故用中性色） */
+.atc-note {
+    font-size:.875rem; color:var(--text-primary); background:var(--gray-bg);
+    border:1px solid var(--gray-border); border-radius:8px; padding:.5rem .8rem; margin-bottom:.75rem;
+}
+.atc-note-warn { background:var(--amber-bg); border-color:var(--amber-border); color:var(--amber-text); }
+.atc-summary {
+    background:var(--bg-white); border:1px solid var(--border-color); border-radius:12px;
+    padding:.75rem 1rem; margin-bottom:1.25rem; box-shadow:var(--shadow-sm);
+}
+.atc-summary-head {
+    display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap;
+    font-size:.875rem; font-weight:600; margin-bottom:.5rem;
+}
+.atc-table-wrap { max-height:320px; overflow-y:auto; }
+/* 固定欄寬：長成分名（PERINDOPRIL TERT-BUTYLAMINE）會把表格撐寬，手機上品項數欄被擠出畫面 */
+.atc-table { width:100%; border-collapse:collapse; font-size:.875rem; table-layout:fixed; }
+.atc-table th:first-child, .atc-table td:first-child { width:7rem; }
+.atc-table th:last-child,  .atc-table td:last-child  { width:3.75rem; text-align:right; }
+.atc-table td { overflow-wrap:break-word; }
+.atc-table th {
+    text-align:left; position:sticky; top:0; background:var(--bg-white);
+    border-bottom:1px solid var(--border-color); padding:.35rem .5rem; color:var(--text-primary);
+}
+.atc-table td { padding:.3rem .5rem; border-bottom:1px solid var(--border-color); vertical-align:top; }
+.atc-table td.atc-count { text-align:right; white-space:nowrap; }
+.atc-row {
+    font:inherit; font-weight:600; cursor:pointer; color:var(--primary-blue);
+    background:var(--lighter-blue); border:1px solid var(--light-blue); border-radius:6px;
+    padding:.15rem .5rem; white-space:nowrap;
+}
+.atc-row:hover { background:var(--light-blue); }
+.atc-row.active { background:var(--primary-blue); color:#fff; border-color:var(--primary-blue); }
+.atc-row:focus-visible { outline:2px solid var(--primary-blue); outline-offset:2px; }
+
 /* 美國處方藥仿單參考（openFDA）：外國參考資料用中性灰，與健保 amber 區塊區隔；
    BW 為警示內容才用 amber 左框。狀態一律有文字，不只靠顏色。 */
 .us-label {
@@ -463,6 +498,11 @@ footer a { color:var(--primary-blue); text-decoration:none; }
     .us-label { padding:.6rem .7rem; }
     .us-label-bw { padding:.5rem .6rem; }
     .us-label-text { max-height:260px; }
+    .atc-summary { padding:.6rem .6rem; }
+    .atc-table th:first-child, .atc-table td:first-child { width:5.9rem; }
+    .atc-table th:last-child,  .atc-table td:last-child  { width:2.9rem; }
+    .atc-table td, .atc-table th { padding:.3rem .3rem; }
+    .atc-row { padding:.15rem .35rem; }
     .search-box { flex-direction:column; }
     #searchBtn { width:100%; }
     .drug-card { padding:1.25rem; }
@@ -547,6 +587,7 @@ footer a { color:var(--primary-blue); text-decoration:none; }
             <span class="filter-label">🔎 搜尋範圍：</span>
             <button class="scope-btn filter-btn active" data-scope="name">品名</button>
             <button class="scope-btn filter-btn" data-scope="ingredient">成分</button>
+            <button class="scope-btn filter-btn" data-scope="atc">ATC</button>
             <button class="scope-btn filter-btn" data-scope="both">全部</button>
         </div>
 
