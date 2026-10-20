@@ -1,7 +1,7 @@
 # 規劃：美國處方藥仿單參考區塊（openFDA `/drug/label`）
 
-- 修訂：**v4**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v4 依 Phase 0 實測＋使用者決策）
-- 狀態：Phase 0 進行中。v4 依實測拿掉 ② 的否定結論（見 §10 Phase 0 結果）
+- 修訂：**v5**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v5 依 Phase 0 實測＋使用者決策）
+- 狀態：**Phase 0 通過**（§10），下一步 Phase 1 實作
 
 ---
 
@@ -28,7 +28,7 @@
 - N5. 不在前端即時呼叫 openFDA。
 - N6. 不處理 OTC 仿單（`HUMAN OTC DRUG`）。
 - N7. 不顯示其他章節。
-- N8. 中藥許可證、原料藥不顯示本區塊。
+- N8. 原料藥、硬空膠囊不顯示本區塊（API 37 不含中藥許可證，Phase 0 已確認）。
 - N9. 不做使用者回報錯配的機制。
 - N10. 不做品項級對應（劑型細分、釋放形式、複方比例），也不做 FDA 核准資格篩選。
 - N11. 不建立通用的藥名分類器（例如辨識同義名、化學關係）。
@@ -59,7 +59,7 @@
 | D3 | 查詢單位為「正規化成分集合＋途徑群組」 | 主成分約 3,470 個、許可證 22,247 筆，去重後的查詢量遠低於配額 |
 | D4 | 使用 openFDA API key（存在 GitHub Secrets），log 不得印出 key | 沒有 key 時額度只有 1,000 次／日 |
 | D5 | 途徑判定：API 37「劑型」→ 寫死的對照表 → 途徑群組 → 比對 `openfda.route`。`route` 必須**非空且有效**；有多個值時，**每個值都要落在群組內**才納入。成分相符的 SPL 中，只要有一份 route 缺失或無效 → 該鍵**不可用** | 劑型共 224 種、0 空值，前 90 種涵蓋 97.6%。注射劑歸 PARENTERAL 群組。route 缺失不直接排除，因為排除可能漏掉 BW、造成假的 ② |
-| D6 | 對照表外的劑型、語意模糊的劑型（`（粉）`／`液劑`／`粉劑`／`滴劑`／`顆粒劑`）、劑型缺值 → ③ | 寧缺勿錯 |
+| D6 | 以下劑型 → ③：對照表外的劑型、劑型缺值，以及語意模糊的劑型（完整清單見 §10 Phase 0 結果；例如 `（粉）`／`液劑`／`粉劑`／`滴劑`／`顆粒劑`／`栓劑`／`貼片劑`） | 寧缺勿錯 |
 | D7 | **成分等同性＝原樣完全相等＋封閉轉換清單**（§6.1）。`generic_name` 只用來找候選，不放寬納入標準 | 覆蓋率會降低，但正確性不受影響，也符合輕量原則 |
 | D8 | 只納入 `HUMAN PRESCRIPTION DRUG` | |
 | D9 | SW 讓 `us_label_data.json` 走 DATA_CACHE stale-while-revalidate，**每個資料檔各有獨立的更新鎖與驗證函式**；不放進 install 預快取 | 現行的單一鎖會讓兩個檔案互相擋住更新 |
@@ -78,7 +78,12 @@
   - `ACETAMINOPHEN (EQ TO PARACETAMOL)` → `ACETAMINOPHEN`
   - `FOSPHENYTOIN (EQ TO PHENYTOIN)` → `FOSPHENYTOIN`：前驅藥不會被合併成活性物。
 - **T2**：去掉**名稱結尾**的鹽類或水合物字尾。
-  - 字尾清單是封閉清單，在 Phase 0 定案，必須完整列舉，不可以用「…」帶過。
+  - 字尾清單為封閉清單（Phase 0 定案，使用者選定「寫法＋水合物＋反離子鹽」三層）：
+    - **T2a 寫法統一**：`HCL`→`HYDROCHLORIDE`、`HBR`→`HYDROBROMIDE`、`SULPHATE`→`SULFATE`、`MICRONISED`→`MICRONIZED`。括號內只有 T2 清單詞時，攤平成尾詞，例如 `MINOCYCLINE (HCL)`、`NAPROXEN (SODIUM)`。
+    - **T2b 水合物與物理型態**：`MONOHYDRATE` `DIHYDRATE` `TRIHYDRATE` `TETRAHYDRATE` `PENTAHYDRATE` `HEXAHYDRATE` `HEPTAHYDRATE` `HEMIHYDRATE` `SESQUIHYDRATE` `HYDRATE` `ANHYDROUS` `HYDROUS` `MICRONIZED` `H2O`。
+    - **T2c 反離子鹽**：`HYDROCHLORIDE` `DIHYDROCHLORIDE` `HYDROBROMIDE` `SODIUM` `DISODIUM` `POTASSIUM` `DIPOTASSIUM` `CALCIUM` `MAGNESIUM` `SULFATE` `BISULFATE` `MESYLATE` `DIMESYLATE` `BESYLATE` `MALEATE` `FUMARATE` `HEMIFUMARATE` `TARTRATE` `BITARTRATE` `CITRATE` `TOSYLATE` `LACTATE` `NITRATE` `BROMIDE` `CHLORIDE` `IODIDE` `MALATE` `OXALATE` `XINAFOATE` `TROMETHAMINE` `MEGLUMINE` `GLUCONATE`。
+    - **刻意不列的酯類字尾**（保留差異）：`ACETATE` `PHOSPHATE` `SUCCINATE` `VALERATE` `PROPIONATE` `DIPROPIONATE` `DECANOATE` `PALMITATE` `BENZOATE` `FUROATE` `CYPIONATE` `ENANTHATE` 等。因此 `CLINDAMYCIN PHOSPHATE`、`HALOPERIDOL DECANOATE`、`METOPROLOL SUCCINATE` 都保留原名。
+    - **例外清單**（去除字尾後只剩這些詞時，不去除）：`SODIUM` `POTASSIUM` `CALCIUM` `MAGNESIUM` `ZINC` `IRON` `FERROUS` `FERRIC` `LITHIUM` `ALUMINUM` `ALUMINIUM` `COPPER` `CUPRIC` `BARIUM` `AMMONIUM` `CHLORIDE` `SULFATE` `BROMIDE` `IODIDE` `CITRATE` `HYDROGEN`。
   - 例外：如果去掉字尾後是空字串，或只剩另一個金屬或酸根，就不去除。所以 `SODIUM BICARBONATE`、`MAGNESIUM OXIDE`、`POTASSIUM CHLORIDE` 都保留原名。
 - **其他情況一律不轉換**。T1 以外的括號、清單外的修飾詞，都按原樣比對；比對不到就歸 ③。
 
@@ -105,7 +110,7 @@ C 是同時符合以下三個條件的 SPL：
 
 | 狀態 | 條件 | 顯示 |
 |---|---|---|
-| 不適用 | API 37「許可證種類」明確判定為中藥，或品項為原料藥。「許可證種類」缺值或未知時 → 歸「不可用」，不預設當西藥 | 不顯示區塊 |
+| 不適用 | API 37「許可證種類」為「原料藥」或「硬空膠囊」，或品項為原料藥（`isRawMaterial`）。「製劑」「菌疫」照常比對；許可證種類缺值或為其他值 → 歸「不可用」，不預設當作製劑 | 不顯示區塊 |
 | ① 有 BW | C 完整且非空，至少一份 SPL 的 `boxed_warning` 有內容 | 逐份列出有 BW 的來源與原文，並註明「openFDA 可比對的 N 份參考仿單中，M 份列有 BW」。**N＝C 的唯一來源數，M＝其中有 BW 的份數** |
 | ② 未找到 BW | C 完整且非空，**每一份** SPL 的 `boxed_warning` 都缺少或為空 | 「在 openFDA 可比對的 N 份美國處方藥仿單中**未找到** Boxed Warning。openFDA 約三成仿單缺結構化資料、無法比對，**不代表本成分沒有 Boxed Warning**，請至 DailyMed 確認」＋ DailyMed 搜尋連結。**不得**使用「無 BW」「未列 BW」等否定措辭 |
 | ③ 查無對應 | C 完整但為空；或劑型不在對照表內；或成分無法比對 | 「查無可對應的美國處方藥仿單」，並附 DailyMed 搜尋連結 |
@@ -225,7 +230,7 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
   - ORAL、TOPICAL、OPHTHALMIC、未知途徑一律不納入。
   - route 同時含 INTRAVENOUS 與 ORAL 的 SPL → 不納入。
   - 成分相符的 SPL 中有一份 route 缺欄位、為空陣列或空白 → 該鍵不可用。
-- **A12** 中藥、原料藥：依原始 API 37 欄位判定為「不適用」，即使成分可匹配也不產鍵。
+- **A12** 原料藥、硬空膠囊：依原始 API 37 欄位判定為「不適用」，即使成分可匹配也不產鍵；「菌疫」照常比對。
   - 控制組：成分相同的一般西藥要顯示區塊。
   - 「許可證種類」缺值或未知 → 不可用。
 - **A13** 同成分、同途徑的 OTC SPL 有 BW，處方藥 SPL 沒有 → ②。
@@ -304,6 +309,33 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
   - 不採用「DailyMed 混合補召回」：違反輕量原則。
   - 不採用「全文防護並保留 ②」：屬啟發式判斷，而且 ② 幾乎不可能成立。
 - **召回關卡的通過條件改為**：在 openFDA 有結構化欄位的範圍內，查詢能涵蓋每一種允許的轉換。
+- **召回關卡：通過**（使用者確認 2026-10-20）
+  - **查詢方式**：`openfda.product_type:"HUMAN PRESCRIPTION DRUG" AND openfda.substance_name:"<轉換後成分>"`（片語查詢），取回後再於本地依 §6.1 轉換，比對集合是否相等。`generic_name` 不用於查詢。
+  - **參考集**：15 個，包含 AMLODIPINE、WARFARIN、DICLOFENAC、METFORMIN、ISOTRETINOIN、OLANZAPINE、MINOCYCLINE、NAPROXEN、ESOMEPRAZOLE、CLINDAMYCIN、CLINDAMYCIN PHOSPHATE、HALOPERIDOL DECANOATE、LEVOTHYROXINE、LISINOPRIL+HYDROCHLOROTHIAZIDE、ACETAMINOPHEN+OXYCODONE。
+  - **驗證結果**：
+    - 全部 PASS：分頁全數取完，0 份重複。
+    - 與 `generic_name` 查詢交叉比對，遺漏 0 份。
+    - 每頁 50 筆的多頁取回測試（metformin，8 頁）：361/361。
+  - **候選規模**：結構化 Rx 中，單一成分最多 562 份（OXYGEN），沒有超過 1,000 份的成分。
+  - **TFDA 覆蓋**：
+    - 可產鍵 18,056 筆（81.2%）。
+    - 原料藥 12.8%。
+    - ③（劑型不在對照表）6.0%。
+    - 唯一鍵 4,610 個，其中單方 2,306 個。
+  - **API 37「許可證種類」實際值**：製劑 20,947、原料藥 3,065、菌疫 1,906、硬空膠囊 29，**不含中藥**，因此修訂 N8 與 §6.3「不適用」的判定。
+- **劑型 → 途徑群組對照表**（使用者確認）：
+  - **ORAL**：錠劑、膜衣錠、膠囊劑、糖衣錠、持續性藥效錠、軟膠囊劑、腸溶膜衣錠、持續性藥效膠囊劑、腸溶錠、咀嚼錠、口溶錠、持續性藥效膜衣錠、腸溶微粒膠囊劑、持續性膜衣錠、持續性釋放錠、發泡錠、腸溶膠囊劑、腸溶糖衣錠、持續釋放膜衣錠、內服液劑、口服液劑、糖漿劑、內服顆粒劑、懸液用顆粒劑、丸劑、散劑
+  - **SUBLINGUAL**：舌下錠
+  - **INJECTION**：注射劑、凍晶注射劑、注射液劑、乾粉注射劑、凍晶乾燥注射劑、注射液、滅菌懸液注射劑、預充填式注射劑、懸浮注射劑、凍晶乾粉注射劑、注射用凍晶粉末與注射用液劑、皮下注射劑、無菌懸浮注射液、靜脈點滴注射劑、注射用懸液劑
+    - 對應 openFDA route：INTRAVENOUS、INTRAMUSCULAR、SUBCUTANEOUS、PARENTERAL、INTRADERMAL、INTRA-ARTERIAL、INTRAVASCULAR、INFILTRATION、PERINEURAL、EPIDURAL、INTRACAUDAL、INTRATHECAL、INTRA-ARTICULAR、INTRALESIONAL、SOFT TISSUE、INTRASYNOVIAL、SUBARACHNOID、INTRACAVERNOUS、INTRACARDIAC、INTRAPERITONEAL、INTRAPLEURAL、SUBMUCOSAL、INTRAOSSEOUS
+  - **TOPICAL**（含 TOPICAL、CUTANEOUS）：乳膏劑、軟膏劑、外用液劑、外用凝膠劑、藥膠布、外用噴液劑、洗劑、洗髮劑、外用粉劑
+  - **TRANSDERMAL**：穿皮貼片劑
+  - **OPHTHALMIC**：點眼液劑、點眼膏劑、點眼懸液劑、眼用液劑、眼用凝膠劑
+  - **NASAL**：鼻用噴液劑
+  - **INHALATION**（對應 RESPIRATORY (INHALATION)）：口腔吸入劑、乾粉吸入劑、吸入用液劑
+  - **RECTAL**：浣腸劑
+  - **VAGINAL**：陰道錠
+  - **→ ③（途徑不明）**：（粉）、液劑、粉劑、滴劑、顆粒劑、溶液劑、懸液劑、懸液用粉劑、溶液用粉劑、栓劑（直腸或陰道不分）、貼片劑（外用或穿皮不分）、口含錠、口內膏、口腔噴液劑、漱口劑、酊劑、油劑、透析用液劑、透析用粉劑、醫用氣體、硬空膠囊劑，以及其他未列劑型
 
 ### Phase 0 — 召回關卡（**通過之前，不寫比對邏輯與前端程式**）
 1. 定案劑型對照表，以及 §6.1 T2 字尾清單的完整列舉。
@@ -344,3 +376,4 @@ ETL → 資料檔 → 前端 → SW → workflow，依 §9 驗收。
 | v3 | §9 補上各條反例；新增 C5；D1＋D2 合併並改以 DailyMed 作獨立來源 | R8–R11、R15 |
 | v3 | §10 新增 Phase 0 召回關卡 | R4 |
 | v4 | 新增 G3（只做正面陳述）；② 改為「未找到 BW（不代表沒有）」；章節的「全部未提供」同步修改措辭；A2、B4、D2 跟著調整；§10 記錄 Phase 0 結果 F1、F2 | Phase 0 實測＋使用者決策 |
+| v5 | T2 封閉清單定案（寫法＋水合物＋反離子鹽，酯類保留）；劑型→途徑對照表定案；召回關卡通過；修訂 N8、§6.3「不適用」、A12（API 37 不含中藥） | Phase 0 實測＋使用者確認 |
