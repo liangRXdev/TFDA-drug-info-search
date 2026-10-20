@@ -1,4 +1,4 @@
-const STATIC_CACHE = 'tfda-static-v7';   // index.html／app.js 有異動時須同步提升（見 README）
+const STATIC_CACHE = 'tfda-static-v8';   // index.html／app.js 有異動時須同步提升（見 README）
 const DATA_CACHE   = 'tfda-data-v2';
 const FONT_CACHE   = 'tfda-fonts-v2';
 const ALL_CACHES   = [STATIC_CACHE, DATA_CACHE, FONT_CACHE];
@@ -34,22 +34,90 @@ async function notifyClients(type) {
   clients.forEach(c => c.postMessage({ type }));
 }
 
-// 寫入快取前驗證回應確實是完整的藥品資料。
+// 寫入快取前驗證回應確實是完整的資料檔。
 // 只看 HTTP status 不夠：主機或 CDN 回傳 200 的 HTML 錯誤頁時會覆蓋有效快取，
 // 使用者端往後每次載入都失敗且自己無法清除——屬於永久性的快取毒化。
-async function isValidDataResponse(resp) {
+async function isValidDataResponse(resp, validate) {
   const ctype = resp.headers.get('Content-Type') || '';
   if (!ctype.includes('json')) return false;
   try {
-    const data = await resp.clone().json();
-    return Number(data?._meta?.totalRecords) > 0 && Array.isArray(data?.data);
+    return validate(await resp.clone().json());
   } catch {
     return false;
   }
 }
 
-// ── drugs_data.json：stale-while-revalidate ─────────────────────────
-async function revalidateData(request, cachedETag) {
+function isValidDrugsData(data) {
+  return Number(data?._meta?.totalRecords) > 0 && Array.isArray(data?.data);
+}
+
+// 美國仿單參考：與 app.js 同名函式、us_label.py 的 validate_result／validate_output
+// 為同一份資料契約（docs/plan-us-label.md §6.3）。SW 與頁面無法共用程式碼，三處須同步修改；
+// tests/fixtures/us_label_contract.json 的反例三方都跑（Codex 審查 CR1／CR2）
+const US_LABEL_RULES_VERSION = 1;   // 須與 us_label.py MATCH_RULES_VERSION、app.js 同值（pytest 擋）
+const US_LABEL_STATES = new Set(['bw', 'nobw', 'nomatch', 'unavailable']);
+const US_PREG_SECTIONS = new Set(['pregnancy', '8.1 Pregnancy', 'teratogenic_effects']);
+const US_LACT_SECTIONS = new Set(['8.2 Lactation', 'nursing_mothers']);
+const US_SOURCE_FIELDS = new Set(['id', 'v', 'name', 'mfr', 'app', 'eff']);
+const US_ENTRY_FIELDS = ['s', 'n', 'm', 'r', 'preg', 'lact'];
+
+const isPlainObject = o => !!o && typeof o === 'object' && !Array.isArray(o);
+const hasExactKeys = (o, keys) => Object.keys(o).length === keys.length && keys.every(k => k in o);
+const hasText = a => Array.isArray(a) && a.every(t => typeof t === 'string') && a.some(t => t.trim());
+
+function isValidUsSource(s) {
+  return isPlainObject(s) && Object.keys(s).every(k => US_SOURCE_FIELDS.has(k))
+    && Object.values(s).every(v => typeof v === 'string') && !!s.id;
+}
+
+function isValidUsSection(sec, names, extraStates) {
+  if (!isPlainObject(sec)) return false;
+  if (sec.st === 'ok') return hasExactKeys(sec, ['st', 'sec', 't']) && names.has(sec.sec) && hasText(sec.t);
+  return (sec.st === 'none' || extraStates.includes(sec.st)) && hasExactKeys(sec, ['st']);
+}
+
+function isValidUsLabelEntry(e) {
+  if (!isPlainObject(e) || !US_LABEL_STATES.has(e.s)) return false;
+  if (e.s === 'nomatch' || e.s === 'unavailable') return hasExactKeys(e, ['s']);
+  if (!Number.isInteger(e.n) || !Number.isInteger(e.m) || e.n < 1 || e.m < 0 || e.m > e.n) return false;
+  if (!isValidUsSource(e.r) || !isValidUsSection(e.preg, US_PREG_SECTIONS, [])
+      || !isValidUsSection(e.lact, US_LACT_SECTIONS, ['unextractable'])) return false;
+  if (e.s === 'bw') {
+    if ('b' in e && !isValidUsSource(e.b)) return false;
+    return e.m >= 1 && hasText(e.bw)
+      && Object.keys(e).every(k => US_ENTRY_FIELDS.includes(k) || k === 'bw' || k === 'b');
+  }
+  return e.m === 0 && hasExactKeys(e, US_ENTRY_FIELDS);
+}
+
+// 殘缺但每筆合法的檔案（_meta 宣稱 N 鍵、實際較少）也要拒收，否則會覆蓋完整的舊快取
+function isValidUsLabelData(data) {
+  const meta = data && data._meta, d = data && data.data;
+  if (!isPlainObject(meta) || !isPlainObject(d)) return false;
+  const vals = Object.values(d);
+  if (!vals.length || meta.matchRulesVersion !== US_LABEL_RULES_VERSION || meta.keys !== vals.length) return false;
+  if (!vals.every(isValidUsLabelEntry) || !isPlainObject(meta.counts)) return false;
+  const actual = { bw: 0, nobw: 0, nomatch: 0, unavailable: 0 };
+  vals.forEach(v => { actual[v.s]++; });
+  return hasExactKeys(meta.counts, Object.keys(actual))
+    && Object.keys(actual).every(s => meta.counts[s] === actual[s]);
+}
+
+// 每個資料檔各自的驗證與通知訊息。各檔獨立 single-flight：
+// 共用一把鎖時，一個檔的背景更新會讓另一個檔的更新被吞掉（規格 D9）
+const DATA_FILES = {
+  'drugs_data.json':    { validate: isValidDrugsData,
+                          updated: 'DATA_UPDATED', failed: 'DATA_UPDATE_FAILED' },
+  'us_label_data.json': { validate: isValidUsLabelData,
+                          updated: 'US_LABEL_UPDATED', failed: 'US_LABEL_UPDATE_FAILED' },
+};
+
+function dataFileOf(url) {
+  return Object.keys(DATA_FILES).find(name => url.pathname.endsWith('/' + name)) || null;
+}
+
+// ── 資料檔：stale-while-revalidate ──────────────────────────────────
+async function revalidateData(request, cachedETag, spec) {
   // 帶 If-None-Match 走條件請求；no-store 是為了繞過 HTTP cache，
   // 讓伺服器（而非瀏覽器快取）來判斷 304，否則 max-age=600 內拿不到真實狀態
   const headers = cachedETag ? { 'If-None-Match': cachedETag } : {};
@@ -65,39 +133,38 @@ async function revalidateData(request, cachedETag) {
   const newETag = resp.headers.get('ETag');
   if (newETag && cachedETag && newETag === cachedETag) return;
 
-  if (!await isValidDataResponse(resp)) {
+  if (!await isValidDataResponse(resp, spec.validate)) {
     // 驗證失敗時保留舊快取：寧可用舊資料，也不要讓使用者陷入永久壞掉的狀態
-    await notifyClients('DATA_UPDATE_FAILED');
+    await notifyClients(spec.failed);
     return;
   }
 
   const cache = await caches.open(DATA_CACHE);
   await cache.put(request, resp.clone());
   // 頁面已用舊資料渲染完畢，僅提示可重新整理，不強制中斷使用者操作
-  await notifyClients('DATA_UPDATED');
+  await notifyClients(spec.updated);
 }
 
-// single-flight：多個分頁或連續請求會各自觸發背景更新，若不合併，
-// 同一份 20MB+ 的資料會被同時下載多次，且較早開始、較晚完成的回應
-// 可能覆蓋較新的快取。
-let inflightRevalidate = null;
+// single-flight（每檔一把）：多個分頁或連續請求會各自觸發背景更新，若不合併，
+// 同一份大型資料會被同時下載多次，且較早開始、較晚完成的回應可能覆蓋較新的快取。
+const inflightRevalidate = new Map();
 
-function revalidateOnce(request, cachedETag) {
-  if (!inflightRevalidate) {
-    inflightRevalidate = revalidateData(request, cachedETag)
-      .finally(() => { inflightRevalidate = null; });
+function revalidateOnce(name, request, cachedETag) {
+  if (!inflightRevalidate.has(name)) {
+    inflightRevalidate.set(name, revalidateData(request, cachedETag, DATA_FILES[name])
+      .finally(() => { inflightRevalidate.delete(name); }));
   }
-  return inflightRevalidate;
+  return inflightRevalidate.get(name);
 }
 
-async function handleDataRequest(event) {
+async function handleDataRequest(event, name) {
   const request = event.request;
   const cached = await caches.match(request);
 
   if (cached) {
     // 背景更新不可用 await 擋住回應，但需 waitUntil 保住 SW 生命週期
     event.waitUntil(
-      revalidateOnce(request, cached.headers.get('ETag')).catch(() =>
+      revalidateOnce(name, request, cached.headers.get('ETag')).catch(() =>
         notifyClients('OFFLINE_MODE')   // 背景更新失敗多半是離線
       )
     );
@@ -108,7 +175,7 @@ async function handleDataRequest(event) {
   try {
     const resp = await fetch(request);
     // 首次造訪同樣須驗證後才入快取，否則一個 200 的錯誤頁就會被當成資料存起來
-    if (resp.ok && await isValidDataResponse(resp)) {
+    if (resp.ok && await isValidDataResponse(resp, DATA_FILES[name].validate)) {
       const cache = await caches.open(DATA_CACHE);
       await cache.put(request, resp.clone());
     }
@@ -144,16 +211,16 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // drugs_data.json：stale-while-revalidate
+  // 資料檔（drugs_data.json、us_label_data.json）：stale-while-revalidate
   // 資料由 GitHub Actions 每週更新一次，但壓縮後仍有 ~8.3MB。改為先回快取
   // 讓畫面立即可用，再於背景以條件請求（If-None-Match）確認是否有新版：
   // 未更新時只花一個 304（約數百 bytes），毋須重抓整包。
   // 須限定同源與 GET：原本只比對 pathname，任何跨來源的同名資源都會套用
   // 這套資料快取策略
-  if (url.origin === self.location.origin &&
-      event.request.method === 'GET' &&
-      url.pathname.endsWith('drugs_data.json')) {
-    event.respondWith(handleDataRequest(event));
+  const dataFile = url.origin === self.location.origin && event.request.method === 'GET'
+    ? dataFileOf(url) : null;
+  if (dataFile) {
+    event.respondWith(handleDataRequest(event, dataFile));
     return;
   }
 

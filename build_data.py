@@ -46,6 +46,8 @@ except ImportError:
     print("✗  缺少 requests 套件", file=sys.stderr)
     sys.exit(1)
 
+from us_label import MATCH_RULES_VERSION as US_LABEL_RULES_VERSION, item_us_label
+
 # ─── 設定 ───────────────────────────────────────────────────────
 API_37  = "https://data.fda.gov.tw/data/opendata/export/37/json"
 API_39  = "https://data.fda.gov.tw/data/opendata/export/39/json"
@@ -524,6 +526,7 @@ def main():
     K37_ingredient = detect_field(raw37, "主成分", "成分")
     K37_usage      = detect_field(raw37, "用法用量", "用法")
     K37_lictype    = detect_field(raw37, "許可證種類")
+    K37_form       = detect_field(raw37, "劑型")
 
     K39_lic     = detect_field(raw39, "許可證字號")
     K39_package = detect_field(raw39, "仿單圖檔連結", "仿單檔案連結")
@@ -543,7 +546,10 @@ def main():
     KN_validfrom = detect_field(raw_nhi, "有效起日", "生效日期", "起日")
     KN_atccode   = detect_field(raw_nhi, "ATC代碼", "ATC")
     KN_price     = detect_field(raw_nhi, "支付價", "健保價")
-    print(f"  API 37: 適應症={K37_indication} 成分={K37_ingredient} 用法={K37_usage} 類別={K37_lictype}")
+    print(f"  API 37: 適應症={K37_indication} 成分={K37_ingredient} 用法={K37_usage} 類別={K37_lictype} 劑型={K37_form}")
+    if not K37_form:
+        # 不中止：主資料照常發布，美國仿單區塊會整批落入 ③（劑型不明），由統計可見
+        print("  ⚠  找不到 API 37 劑型欄位，美國仿單參考將全數無法比對", file=sys.stderr)
     print(f"  API 39: lic={K39_lic} 仿單={K39_package} 外盒={K39_outer}")
     print(f"  API 42: lic={K42_lic} 圖檔={K42_image}")
     print(f"  NHI: 代號={KN_drugcode} 章節={KN_chapter} 章節連結={KN_link}")
@@ -687,6 +693,7 @@ def main():
                                     K37_indication, K37_ingredient, K37_usage) if f]
     raw_count = matched_nhi = with_chapter = with_chapter_link = 0
     conf_verified = conf_code_only = 0   # 成分比對信心度統計（弱匹配規模需可觀測）
+    us_label_stats = {}                  # 美國仿單參考：品項統計（產鍵／各狀態）
     for drug in raw37:
         lic = (drug.get("許可證字號") or "").strip()
         if not lic:
@@ -753,6 +760,17 @@ def main():
         # 食藥署新版電子仿單連結（穩定）— 每張許可證都有
         fda_package_url = FDA_PACKAGE_INSERT_URL.format(license=lic)
 
+        # 美國仿單參考：有鍵者帶 usLabelKey，其餘帶 usLabelStatus（兩者恰有其一）
+        us_kind, us_value = item_us_label(
+            drug.get(K37_lictype) if K37_lictype else "",
+            is_raw,
+            drug.get(K37_form) if K37_form else "",
+            drug.get(K37_ingredient) if K37_ingredient else "",
+        )
+        us_label_field = {"usLabelKey" if us_kind == "key" else "usLabelStatus": us_value}
+        stat = "key" if us_kind == "key" else us_value
+        us_label_stats[stat] = us_label_stats.get(stat, 0) + 1
+
         output.append({
             "licenseNumber":    lic,
             "licenseType":      (drug.get(K37_lictype)    or "").strip() if K37_lictype    else "",
@@ -772,6 +790,7 @@ def main():
             "chapterDetails":   chapter_details,
             "isRawMaterial":    is_raw,
             "isNhi":            is_nhi,
+            **us_label_field,
         })
 
     print(f"  總筆數：{len(output):,}")
@@ -785,6 +804,7 @@ def main():
     if conf_total:
         print(f"  成分比對：verified {conf_verified:,}（{conf_verified/conf_total:.1%}）| "
               f"code-only {conf_code_only:,}（{conf_code_only/conf_total:.1%}，僅代號匹配未驗證成分）")
+    print(f"  美國仿單參考（品項）：{', '.join(f'{k} {v:,}' for k, v in sorted(us_label_stats.items()))}")
 
     # ── Step 4：輸出 ────────────────────────────────────────────
     # 建置時間戳刻意「不」寫入 drugs_data.json：它每次必然改變，會使
@@ -802,17 +822,30 @@ def main():
                 "chaptersTotal":  len(nhi_chapters),
                 "matchVerified":  conf_verified,
                 "matchCodeOnly":  conf_code_only,
+                # build_us_label.py 與前端都以此核對 us_label_data.json 的規則版本
+                "usLabelRulesVersion": US_LABEL_RULES_VERSION,
+                "usLabelItems":   us_label_stats,
             },
             "data": output,
         }, f, ensure_ascii=False, separators=(",", ":"))
     print(f"  ✓  完成（{os.path.getsize(OUTPUT_FILE)/1e6:.2f} MB）")
 
+    # usLabelGeneratedAt 由 build_us_label.py 寫入；該步驟失敗時保留上一版仿單資料，
+    # 其建置時間也須沿用，否則前端會把舊仿單資料標成「建置時間未知」
+    version = {
+        "generatedAt":   datetime.now().isoformat(),
+        "totalRecords":  len(output),
+        "nhiRecords":    matched_nhi,
+    }
+    try:
+        with open(VERSION_FILE, encoding="utf-8") as f:
+            prev = json.load(f).get("usLabelGeneratedAt")
+        if prev:
+            version["usLabelGeneratedAt"] = prev
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
     with open(VERSION_FILE, "w", encoding="utf-8") as f:
-        json.dump({
-            "generatedAt":   datetime.now().isoformat(),
-            "totalRecords":  len(output),
-            "nhiRecords":    matched_nhi,
-        }, f, ensure_ascii=False, indent=2)
+        json.dump(version, f, ensure_ascii=False, indent=2)
     print(f"  ✓  版本資訊寫入 {VERSION_FILE}")
 
     # ── Step 5：驗證 ────────────────────────────────────────────

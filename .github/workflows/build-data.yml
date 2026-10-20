@@ -12,10 +12,18 @@ on:
       - main
     paths:
       - 'build_data.py'
+      - 'build_us_label.py'
+      - 'us_label.py'
       - 'nhi_payment_rules.pdf'  # PDF 更新時也重跑
 
 permissions:
   contents: write
+
+# 排程、手動、push 可能重疊：排隊依序執行、不取消進行中的建置。
+# 較舊的批次若在較新的之後才 push，會因 non-fast-forward 被拒，不會覆蓋新資料。
+concurrency:
+  group: build-data
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -77,18 +85,48 @@ jobs:
               sys.exit(1)
           "
 
+      # 美國處方藥仿單參考（docs/plan-us-label.md）。失敗時不寫檔、上一版位元不變，
+      # continue-on-error 讓主資料照常發布（規格 D12）。build_us_label.py 內部時限 17 分，
+      # step timeout 20 分為兜底；兩者都失效時，下一步的還原機制仍保證不發布半成品
+      - name: Build US label reference
+        id: us_label
+        continue-on-error: true
+        timeout-minutes: 20
+        run: python build_us_label.py
+
       - name: Commit and push if changed
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # 僅以 drugs_data.json 判定是否有變動。data_version.json 只含建置
-          # 時間戳，每次必然改變；若納入判定，跳過機制將永遠無法生效。
-          git add drugs_data.json
-          if git diff --staged --quiet -- drugs_data.json; then
+          # 仿單步驟非 success（含 timeout 在兩次寫檔之間強制終止）→ 還原仿單檔與其建置時間，
+          # 「失敗＝上一版位元不變」不只靠程式自律（Codex 審查 CR3）。主資料不受影響。
+          if [ "${{ steps.us_label.outcome }}" != "success" ]; then
+            if git ls-files --error-unmatch us_label_data.json >/dev/null 2>&1; then
+              git checkout -- us_label_data.json
+            else
+              rm -f us_label_data.json
+            fi
+            prev=$(git show HEAD:data_version.json 2>/dev/null | jq -r '.usLabelGeneratedAt // empty')
+            tmp=$(mktemp)
+            if [ -n "$prev" ]; then
+              jq --arg t "$prev" '.usLabelGeneratedAt = $t' data_version.json > "$tmp"
+            else
+              jq 'del(.usLabelGeneratedAt)' data_version.json > "$tmp"
+            fi
+            mv "$tmp" data_version.json
+            echo "::warning::美國仿單參考建置失敗（${{ steps.us_label.outcome }}），已還原上一版 us_label_data.json"
+          fi
+          # 只以兩個資料檔判定是否有變動。data_version.json 只含建置時間戳，
+          # 每次必然改變；若納入判定，跳過機制將永遠無法生效。
+          # us_label_data.json 本身不含時間戳，同理只在內容真的變動時才算。
+          files="drugs_data.json"
+          [ -f us_label_data.json ] && files="$files us_label_data.json"
+          git add $files
+          if git diff --staged --quiet -- $files; then
             echo "📋 資料無變動，跳過 commit（本次建置的時間戳一併捨棄）"
           else
             git add data_version.json
             git commit -m "data: 自動更新藥品資料庫 $(date +'%Y-%m-%d')"
             git push
-            echo "✅ 已自動更新 drugs_data.json"
+            echo "✅ 已自動更新：$(git diff --name-only HEAD~1 HEAD | xargs)"
           fi

@@ -1,0 +1,1416 @@
+{
+ "_comment": "us_label 資料契約共用反例：us_label.py validate_result/validate_output、app.js 與 sw.js 的 isValidUsLabelEntry/isValidUsLabelData 必須對每一筆判定一致（Codex 審查 CR1/CR2）",
+ "entries": [
+  {
+   "name": "① 合法",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "① 含合法 b",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    },
+    "b": {
+     "id": "9f8e7d6c-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "② 合法",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "③",
+   "value": {
+    "s": "nomatch"
+   },
+   "valid": true
+  },
+  {
+   "name": "不可用",
+   "value": {
+    "s": "unavailable"
+   },
+   "valid": true
+  },
+  {
+   "name": "null",
+   "value": null,
+   "valid": false
+  },
+  {
+   "name": "空物件",
+   "value": {},
+   "valid": false
+  },
+  {
+   "name": "未知狀態",
+   "value": {
+    "s": "maybe"
+   },
+   "valid": false
+  },
+  {
+   "name": "③ 帶多餘欄位",
+   "value": {
+    "s": "nomatch",
+    "n": 1
+   },
+   "valid": false
+  },
+  {
+   "name": "② N=0（C 必須非空）",
+   "value": {
+    "s": "nobw",
+    "n": 0,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "② N=-1",
+   "value": {
+    "s": "nobw",
+    "n": -1,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "N 為小數",
+   "value": {
+    "s": "nobw",
+    "n": 1.5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "N 為布林",
+   "value": {
+    "s": "nobw",
+    "n": true,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "M>N",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 4,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "① M=0",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "① 缺 BW",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "① BW 混入 null",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "W",
+     null
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "① BW 只有空白",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "  "
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "① BW 非陣列",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": "W",
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "② 卻帶 BW",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    },
+    "bw": [
+     "W"
+    ]
+   },
+   "valid": false
+  },
+  {
+   "name": "② 卻帶 b",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    },
+    "b": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "② 多餘欄位",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    },
+    "x": 1
+   },
+   "valid": false
+  },
+  {
+   "name": "缺懷孕段落",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "缺哺乳段落",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "懷孕 ok 卻無原文",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "ok",
+     "sec": "pregnancy"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "懷孕 ok 原文空白",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "ok",
+     "sec": "pregnancy",
+     "t": [
+      " "
+     ]
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "懷孕不允許 unextractable",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "unextractable"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "懷孕章節名未知",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "ok",
+     "sec": "8.2 Lactation",
+     "t": [
+      "x"
+     ]
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "哺乳章節名未知",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "pregnancy",
+     "t": [
+      "x"
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "段落狀態未知",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "maybe"
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "來源缺 id",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "來源 id 非字串",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": 1,
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "來源欄位非字串",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": null,
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "來源多餘欄位",
+   "value": {
+    "s": "nobw",
+    "n": 5,
+    "m": 0,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115",
+     "x": "1"
+    },
+    "preg": {
+     "st": "none"
+    },
+    "lact": {
+     "st": "ok",
+     "sec": "nursing_mothers",
+     "t": [
+      "Old."
+     ]
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "b 不合法",
+   "value": {
+    "s": "bw",
+    "n": 3,
+    "m": 2,
+    "r": {
+     "id": "0a1b2c3d-1111-2222-3333-444455556666",
+     "v": "3",
+     "name": "COUMADIN",
+     "mfr": "BMS",
+     "app": "NDA009218",
+     "eff": "20250115"
+    },
+    "bw": [
+     "WARNING: BLEEDING RISK"
+    ],
+    "preg": {
+     "st": "ok",
+     "sec": "8.1 Pregnancy",
+     "t": [
+      "8.1 Pregnancy Risk Summary"
+     ]
+    },
+    "lact": {
+     "st": "unextractable"
+    },
+    "b": {
+     "id": ""
+    }
+   },
+   "valid": false
+  }
+ ],
+ "files": [
+  {
+   "name": "合法整份",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3,
+     "counts": {
+      "bw": 1,
+      "nobw": 1,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 5,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     },
+     "TOPICAL|X": {
+      "s": "nomatch"
+     }
+    }
+   },
+   "valid": true
+  },
+  {
+   "name": "宣稱 3 鍵、實際 2 鍵（殘缺檔）",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3,
+     "counts": {
+      "bw": 1,
+      "nobw": 1,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 5,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     }
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "宣稱鍵數錯誤、但各狀態計數正確",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 99,
+     "counts": {
+      "bw": 1,
+      "nobw": 1,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 5,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     },
+     "TOPICAL|X": {
+      "s": "nomatch"
+     }
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "計數與內容不符",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3,
+     "counts": {
+      "bw": 0,
+      "nobw": 2,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 5,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     },
+     "TOPICAL|X": {
+      "s": "nomatch"
+     }
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "缺 counts",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 5,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     },
+     "TOPICAL|X": {
+      "s": "nomatch"
+     }
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "規則版本不符",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 2,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3,
+     "counts": {
+      "bw": 1,
+      "nobw": 1,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 5,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     },
+     "TOPICAL|X": {
+      "s": "nomatch"
+     }
+    }
+   },
+   "valid": false
+  },
+  {
+   "name": "data 為空物件",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 0,
+     "counts": {
+      "bw": 0,
+      "nobw": 0,
+      "nomatch": 0,
+      "unavailable": 0
+     }
+    },
+    "data": {}
+   },
+   "valid": false
+  },
+  {
+   "name": "data 為陣列",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3,
+     "counts": {
+      "bw": 1,
+      "nobw": 1,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": []
+   },
+   "valid": false
+  },
+  {
+   "name": "含一筆違約條目",
+   "value": {
+    "_meta": {
+     "matchRulesVersion": 1,
+     "openfdaExportDate": "2026-10-16",
+     "keys": 3,
+     "counts": {
+      "bw": 1,
+      "nobw": 1,
+      "nomatch": 1,
+      "unavailable": 0
+     }
+    },
+    "data": {
+     "ORAL|WARFARIN": {
+      "s": "bw",
+      "n": 3,
+      "m": 2,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "bw": [
+       "WARNING: BLEEDING RISK"
+      ],
+      "preg": {
+       "st": "ok",
+       "sec": "8.1 Pregnancy",
+       "t": [
+        "8.1 Pregnancy Risk Summary"
+       ]
+      },
+      "lact": {
+       "st": "unextractable"
+      }
+     },
+     "ORAL|AMLODIPINE": {
+      "s": "nobw",
+      "n": 0,
+      "m": 0,
+      "r": {
+       "id": "0a1b2c3d-1111-2222-3333-444455556666",
+       "v": "3",
+       "name": "COUMADIN",
+       "mfr": "BMS",
+       "app": "NDA009218",
+       "eff": "20250115"
+      },
+      "preg": {
+       "st": "none"
+      },
+      "lact": {
+       "st": "ok",
+       "sec": "nursing_mothers",
+       "t": [
+        "Old."
+       ]
+      }
+     },
+     "TOPICAL|X": {
+      "s": "nomatch"
+     }
+    }
+   },
+   "valid": false
+  }
+ ]
+}
