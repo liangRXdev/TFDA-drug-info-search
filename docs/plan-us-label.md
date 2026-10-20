@@ -1,7 +1,7 @@
 # 規劃：美國處方藥仿單參考區塊（openFDA `/drug/label`）
 
-- 修訂：**v7**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v7 依 Phase 0／Phase 1 實測＋使用者決策）
-- 狀態：**Phase 0 通過**（§10）；Phase 1 實作完成、真實資料端到端通過，待人工抽驗（§9 D）
+- 修訂：**v8**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v8 依 Phase 0／Phase 1 實測＋使用者決策＋`/codex-review` 判定 `.ai-review/verdict.md`）
+- 狀態：**Phase 0 通過**（§10）；Phase 1 實作完成、`/codex-review` 修正完成、真實資料端到端通過，待人工抽驗（§9 D）
 
 ---
 
@@ -65,7 +65,7 @@
 | D9 | SW 讓 `us_label_data.json` 走 DATA_CACHE stale-while-revalidate，**每個資料檔各有獨立的更新鎖與驗證函式**；不放進 install 預快取 | 現行的單一鎖會讓兩個檔案互相擋住更新 |
 | D10 | DailyMed 連結格式 `drugInfo.cfm?setid=<set_id>`；`safeUrl()` 白名單加入 `dailymed.nlm.nih.gov`。只用該來源自己的 set_id，且必須是 UUID 格式。連結標示「DailyMed 目前版本（可能比本站資料新）」 | |
 | D11 | 兩個資料檔都帶 `matchRulesVersion`；版本不相容時 → 不可用。§6.1 轉換清單、§6.3 狀態語義、途徑對照表三者任一變更，就要升版；不維護多版本相容矩陣 | |
-| D12 | workflow：兩個資料檔**任一內容有變**就 commit，只有時間戳變動不算。`concurrency` 設為排隊、不取消。仿單步驟**硬性時限 20 分鐘**；不論以何種原因失敗，**都不阻斷主資料發布** | |
+| D12 | workflow：兩個資料檔**任一內容有變**就 commit，只有時間戳變動不算。`concurrency` 設為排隊、不取消。仿單步驟程式內**硬性時限 17 分鐘**，step timeout 20 分鐘作為兜底；不論以何種原因失敗，**都不阻斷主資料發布**，且 commit 步驟會**還原** us_label_data.json 與 usLabelGeneratedAt（v8） | 「失敗＝上一版位元不變」不能只靠程式自律：step timeout 可能在兩次寫檔之間強制終止（Codex CR3、CR7） |
 | D13 | （v6）只呈現**代表仿單**（§6.4），不列出每一份來源，也不合併多份來源的文字；只提供 N、M 統計與 DailyMed 連結 | 實測同一個鍵的 BW 有上百種版本，逐份列出既無法閱讀，資料檔也會遠超出預算 |
 
 ## 6. 對應規則
@@ -120,6 +120,13 @@ C 是同時符合以下三個條件的 SPL：
 
 `drugs_data.json` 的每個品項都帶 `usLabelKey` 或明確的狀態值，**不用 null 同時代表多種意思**。
 
+**資料契約（v8，Codex CR1／CR2）**：
+- ①② 的 `n ≥ 1`、`0 ≤ m ≤ n`；① 的 `m ≥ 1`。
+- 來源物件只允許 `id`／`v`／`name`／`mfr`／`app`／`eff` 這幾個欄位，且值都必須是字串，`id` 不可為空。
+- `preg`／`lact` 必須存在且狀態合法，不得有多餘欄位。BW 陣列的每個元素都必須是字串，且至少一個非空白。
+- 整份檔案：`_meta.keys` 必須等於實際鍵數，`_meta.counts` 必須等於各狀態的實際計數。
+- 三處實作（`us_label.py`、`app.js`、`sw.js`）共用 `tests/fixtures/us_label_contract.json` 的反例。
+
 ### 6.4 代表仿單與章節（v6）
 
 **背景**：Phase 1 開工前實測，同一個鍵常有數百份仿單，BW 文字的版本也很多。例如 metformin 有 253 份帶 BW，空白正規化後仍有 106 種文字；懷孕段落有 72 種。依 21 CFR 314.94(a)(8)，ANDA 仿單必須與參考藥一致，所以這些差異多半只是改版的時間差。因此改為「選一份代表仿單」，不再逐份列出，也不再做跨來源一致性比對。
@@ -134,7 +141,7 @@ C 是同時符合以下三個條件的 SPL：
 - **懷孕、哺乳只取自 R**，不跨來源比對：
   - **懷孕**（v7）：`pregnancy` 有內容就採用；否則從 `use_in_specific_populations` **嚴格擷取 8.1 Pregnancy**（規則與 8.2 相同）；兩者都沒有時，才採用 `teratogenic_effects`。依據：openFDA 對新格式仿單不一定拆出 `pregnancy` 欄位，實測 warfarin 的代表仿單就是這種情況。
   - **哺乳**：先嘗試從 `use_in_specific_populations` 擷取 8.2，擷取成功就採用；否則若 `nursing_mothers` 有內容，就採用它；兩者都沒有 → 狀態為「未找到」。
-  - **8.2 擷取規則**：起點是第一個 `8.2 Lactation`（大小寫不拘），終點是之後第一個「`8.` 加數字、再加空白、再接英文標題字」的位置，例如 `8.3 Females`、`8.4 Pediatric`。**括號內的交叉引用**（例如 `( 8.3 )`）不算終點。找不到起點或終點，就是擷取失敗。
+  - **8.2 擷取規則**：起點是第一個 `8.2 Lactation`（大小寫不拘），終點是之後第一個「`8.` 加數字、再加空白、再接英文標題字」的位置，例如 `8.3 Females`、`8.4 Pediatric`。**括號內的交叉引用**（例如 `( 8.3 )`、`(see 8.3 Females and Males …)`）不算終點：從起點起算，落在尚未閉合的 `(`／`[` 內的候選一律跳過；本段自身括號不平衡而找不到終點 → 擷取失敗。起點只看緊鄰前文——緊接在 `(`／`[` 之後的不算起點；不累計前文全部的括號深度，因為仿單原文常有漏打的右括號（v8，Codex CR5；實測 pantoprazole 等 4 份）。8.1 Pregnancy 用同一套規則。找不到起點或終點，就是擷取失敗。
   - 擷取失敗、但 R 確實有 `use_in_specific_populations` → 顯示「無法自動擷取，請見 DailyMed」，**不顯示截斷的內容**。
 - **原文**指欄位的完整陣列，多個元素依原順序全部保留；擷取 8.2 時只截取區間，不做任何改寫。
 - 無內容的認定：缺欄位、空陣列、只有空白、型別錯誤，都視為無內容。
@@ -145,12 +152,13 @@ C 是同時符合以下三個條件的 SPL：
 
 ```
 API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 usLabelKey 或狀態）
-仿單步驟 build_us_label.py（硬性時限 20 分鐘）：
+仿單步驟 build_us_label.py（程式內硬性時限 17 分鐘）：
   1. 讀 drugs_data.json 的 usLabelKey，去重（規則版本不符、0 個鍵 → 中止）
   2. 取 openFDA download.json 清單並核對筆數
   3. 逐檔下載 bulk zip（失敗會重試並退避、核對 Content-Length）→ 解析 → 核對筆數 → 只保留 Rx 結構化 label 與所需欄位 → 刪除暫存檔
-  4. 依成分集合建索引，依 §6 計算每個鍵的結果，並以 validate_result 自我檢查
-  5. 原子寫入 us_label_data.json（不含時間戳，可重現），並在 data_version.json 記下 usLabelGeneratedAt
+  4. 依成分集合建索引，依 §6 計算每個鍵的結果，並以 validate_result、validate_output 自我檢查
+  5. 寫入前再檢查一次時限；us_label_data.json（不含時間戳，可重現）與 data_version.json（加上 usLabelGeneratedAt）**先全部寫成暫存檔，都成功後才依序替換**，仿單檔先換
+  6. 在 job summary 寫入鍵統計與**品項統計**（不可用超過 5% 時加註停止上線）；整批中止時也要寫入中止原因（v8，Codex CR6）
 ```
 
 - `_meta`：`matchRulesVersion`、`openfdaExportDate`、`labelsTotal`、`rxStructured`、鍵數、各狀態計數。**不放建置時間**，否則每次建置都會產生 diff；建置時間記在 data_version.json 的 `usLabelGeneratedAt`。
@@ -168,12 +176,14 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
 - 以下任一情況 → 步驟以非零碼結束，**不寫入任何檔案**，上一版 us_label_data.json 與 data_version.json 都位元不變：
   - 清單格式不符、筆數加總不符、出現非預期網址
   - 任一檔下載失敗（暫時性錯誤重試 3 次後仍失敗；4xx 除 429 外不重試）、長度不符、zip 損毀、筆數不符
-  - 超過 20 分鐘時限
+  - 超過 17 分鐘時限（下載逾時與重試也受剩餘時間限制）
+  - 寫檔失敗
   - 規則版本不符
   - 鍵數為 0
   - 結果違反資料契約（程式錯誤）
 - 首次建置就失敗 → 不產生仿單檔，前端一律顯示「不可用」。
-- workflow 對本步驟設 `continue-on-error`，**主資料照常發布**；本步驟失敗時，commit 步驟另輸出 `::warning::`。
+- workflow 對本步驟設 `continue-on-error`，**主資料照常發布**。本步驟只要不是 success（包含被 step timeout 強制終止），commit 步驟會**在加入 commit 之前**還原 us_label_data.json（首次建置則刪除），並把 data_version.json 的 usLabelGeneratedAt 改回 HEAD 的值，同時輸出 `::warning::`（v8）。
+- job summary 寫入失敗只記警告，不影響已完成的發布。
 - 原本以「每個鍵的查詢失敗率 5%」作為門檻的規則，改為 bulk 後已不適用，予以刪除。
 
 ## 8. 前端
@@ -267,7 +277,7 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
   - 5xx 重試至上限後中止。
   - 4xx 不重試。
   - 長度不符（中途斷線）要重試。
-- **B3**〔E〕以下任一情況 → 中止且舊檔位元不變，data_version.json 也不變：超過時限、規則版本不符、鍵數為 0。首次建置失敗時不產生檔案。成功時輸出可重現，連續兩次建置的結果位元相同，且不含時間戳。
+- **B3**〔E〕以下任一情況 → 中止且舊檔位元不變，data_version.json 也不變：超過時限、規則版本不符、鍵數為 0。首次建置失敗時不產生檔案。成功時輸出可重現，連續兩次建置的結果位元相同，且不含時間戳。（v8）另外驗證：寫入前超時、暫存檔寫入失敗、兩次替換之間失敗，都要中止且不留暫存檔；summary 寫入失敗不影響發布；summary 要含品項統計與中止原因。
 - **B4**〔F〕前端遇到以下情況，都要顯示「暫時無法提供」：資料檔 404、非 JSON、型別錯誤、狀態值不合法、缺少該鍵、`matchRulesVersion` 不相容。
   - DOM 中不得出現 BW 原文、「未找到 Boxed Warning」或章節全文。
   - 控制組：合法資料要正確顯示。
@@ -417,3 +427,4 @@ ETL → 資料檔 → 前端 → SW → workflow，依 §9 驗收。
 | v5 | T2 封閉清單定案（寫法＋水合物＋反離子鹽，酯類保留）；劑型→途徑對照表定案；召回關卡通過；修訂 N8、§6.3「不適用」、A12（API 37 不含中藥） | Phase 0 實測＋使用者確認 |
 | v6 | §6.4 改為「代表仿單」：NDA/BLA 優先、生效日最新；BW 來源規則；懷孕／哺乳只取自 R，取消跨來源一致性比對；哺乳改為嚴格擷取 8.2（openFDA 沒有 `lactation` 欄位），失敗時改放連結；D13 由逐份清單改為代表仿單；A4、A9、A10 跟進 | Phase 1 開工前實測（metformin 106 種 BW 版本、無 `lactation` 欄位）＋使用者決策 |
 | v7 | 資料來源改為 openFDA bulk 全量（D1、D3、D4、§6.2、§7、B1–B3）；失敗契約改為全有或全無；懷孕段落新增 8.1 擷取；BW 來源提示改用「未找到」措辭；T2 清單依真實資料補上（AS 括號、酯類攤平、CLATHRATE、HEMITARTRATE、2HCL、HYDROGEN）；記錄 Phase 1 結果 | Phase 1 實測＋使用者決策（bulk） |
+| v8 | `/codex-review` 修正：資料契約補強並以三方共用反例驗證（§6.3）；8.1／8.2 擷取的括號規則（§6.4）；寫檔順序、workflow 失敗還原、17 分鐘時限、summary 品項統計（D12、§7、B3）。真實資料重跑後，與修正前輸出 0 鍵差異 | `.ai-review/verdict.md` |
