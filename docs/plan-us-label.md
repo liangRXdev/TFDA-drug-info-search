@@ -1,7 +1,7 @@
 # 規劃：美國處方藥仿單參考區塊（openFDA `/drug/label`）
 
-- 修訂：**v6**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v6 依 Phase 0／Phase 1 實測＋使用者決策）
-- 狀態：**Phase 0 通過**（§10）；Phase 1 實作中
+- 修訂：**v7**（2026-10-20，基準 commit `80e170e`；兩輪 `/codex-checkplan` 審查紀錄在本機 `.ai-review/`（不入版控）；v3→v7 依 Phase 0／Phase 1 實測＋使用者決策）
+- 狀態：**Phase 0 通過**（§10）；Phase 1 實作完成、真實資料端到端通過，待人工抽驗（§9 D）
 
 ---
 
@@ -54,10 +54,10 @@
 
 | # | 決策 | 理由／為何不選另一案 |
 |---|---|---|
-| D1 | **ETL 預抓**，結果存成同源靜態 JSON | 對應邏輯必須能離線驗證，並用 `tests/` 釘住行為 |
+| D1 | **ETL 預抓**，結果存成同源靜態 JSON。資料來源為 openFDA **bulk 全量下載**（`download.json` 清單，14 個檔、約 1.8 GB），不是 API 逐詞查詢（v7） | 對應邏輯必須能離線驗證、用 `tests/` 釘住。API 逐詞查詢實測約需 2,500 次、單詞最大 8 MB，又受 240 次／分限流，會超過 20 分鐘時限；bulk 版本附逐檔筆數，完整性可核對，也沒有召回問題 |
 | D2 | 獨立單一資料檔 `us_label_data.json`，首次展開區塊時 lazy 載入；超過 §8.3 預算才改成靜態分檔 | 避免主資料再膨脹 |
-| D3 | 查詢單位為「正規化成分集合＋途徑群組」 | 主成分約 3,470 個、許可證 22,247 筆，去重後的查詢量遠低於配額 |
-| D4 | 使用 openFDA API key（存在 GitHub Secrets），log 不得印出 key | 沒有 key 時額度只有 1,000 次／日 |
+| D3 | 比對單位為「正規化成分集合＋途徑群組」；bulk 中的 Rx 結構化 label 依成分集合建索引，每個鍵直接查索引 | 實測唯一鍵 4,539 個 |
+| D4 | （v7）**不需要 API key**：bulk 下載不受 API 配額限制 | 原 D4 隨 D1 改為 bulk 而作廢 |
 | D5 | 途徑判定：API 37「劑型」→ 寫死的對照表 → 途徑群組 → 比對 `openfda.route`。`route` 必須**非空且有效**；有多個值時，**每個值都要落在群組內**才納入。成分相符的 SPL 中，只要有一份 route 缺失或無效 → 該鍵**不可用** | 劑型共 224 種、0 空值，前 90 種涵蓋 97.6%。注射劑歸 PARENTERAL 群組。route 缺失不直接排除，因為排除可能漏掉 BW、造成假的 ② |
 | D6 | 以下劑型 → ③：對照表外的劑型、劑型缺值，以及語意模糊的劑型（完整清單見 §10 Phase 0 結果；例如 `（粉）`／`液劑`／`粉劑`／`滴劑`／`顆粒劑`／`栓劑`／`貼片劑`） | 寧缺勿錯 |
 | D7 | **成分等同性＝原樣完全相等＋封閉轉換清單**（§6.1）。`generic_name` 只用來找候選，不放寬納入標準 | 覆蓋率會降低，但正確性不受影響，也符合輕量原則 |
@@ -79,9 +79,11 @@
   - `FOSPHENYTOIN (EQ TO PHENYTOIN)` → `FOSPHENYTOIN`：前驅藥不會被合併成活性物。
 - **T2**：去掉**名稱結尾**的鹽類或水合物字尾。
   - 字尾清單為封閉清單（Phase 0 定案，使用者選定「寫法＋水合物＋反離子鹽」三層）：
-    - **T2a 寫法統一**：`HCL`→`HYDROCHLORIDE`、`HBR`→`HYDROBROMIDE`、`SULPHATE`→`SULFATE`、`MICRONISED`→`MICRONIZED`。括號內只有 T2 清單詞時，攤平成尾詞，例如 `MINOCYCLINE (HCL)`、`NAPROXEN (SODIUM)`。
-    - **T2b 水合物與物理型態**：`MONOHYDRATE` `DIHYDRATE` `TRIHYDRATE` `TETRAHYDRATE` `PENTAHYDRATE` `HEXAHYDRATE` `HEPTAHYDRATE` `HEMIHYDRATE` `SESQUIHYDRATE` `HYDRATE` `ANHYDROUS` `HYDROUS` `MICRONIZED` `H2O`。
-    - **T2c 反離子鹽**：`HYDROCHLORIDE` `DIHYDROCHLORIDE` `HYDROBROMIDE` `SODIUM` `DISODIUM` `POTASSIUM` `DIPOTASSIUM` `CALCIUM` `MAGNESIUM` `SULFATE` `BISULFATE` `MESYLATE` `DIMESYLATE` `BESYLATE` `MALEATE` `FUMARATE` `HEMIFUMARATE` `TARTRATE` `BITARTRATE` `CITRATE` `TOSYLATE` `LACTATE` `NITRATE` `BROMIDE` `CHLORIDE` `IODIDE` `MALATE` `OXALATE` `XINAFOATE` `TROMETHAMINE` `MEGLUMINE` `GLUCONATE`。
+    - **T2a 寫法統一**：
+      - 縮寫與拼法：`HCL`→`HYDROCHLORIDE`、`2HCL`→`DIHYDROCHLORIDE`、`HBR`→`HYDROBROMIDE`、`SULPHATE`→`SULFATE`、`MICRONISED`→`MICRONIZED`。
+      - 括號攤平：括號內（可帶前綴 `AS`）只有 T2 清單詞或酯類詞時，攤平成尾詞。例如 `MINOCYCLINE (HCL)`、`GENTAMICIN (AS SULFATE)`、`BETAMETHASONE (AS DIPROPIONATE)`→`BETAMETHASONE DIPROPIONATE`。酯類攤平後仍保留，不會被剝除（v7）。
+    - **T2b 水合物與物理型態**：`MONOHYDRATE` `DIHYDRATE` `TRIHYDRATE` `TETRAHYDRATE` `PENTAHYDRATE` `HEXAHYDRATE` `HEPTAHYDRATE` `HEMIHYDRATE` `SESQUIHYDRATE` `HYDRATE` `ANHYDROUS` `HYDROUS` `MICRONIZED` `H2O` `CLATHRATE`（v7）。
+    - **T2c 反離子鹽**：`HYDROCHLORIDE` `DIHYDROCHLORIDE` `HYDROBROMIDE` `SODIUM` `DISODIUM` `POTASSIUM` `DIPOTASSIUM` `CALCIUM` `MAGNESIUM` `SULFATE` `BISULFATE` `MESYLATE` `DIMESYLATE` `BESYLATE` `MALEATE` `FUMARATE` `HEMIFUMARATE` `TARTRATE` `BITARTRATE` `HEMITARTRATE`（v7） `CITRATE` `TOSYLATE` `LACTATE` `NITRATE` `BROMIDE` `CHLORIDE` `IODIDE` `MALATE` `OXALATE` `XINAFOATE` `TROMETHAMINE` `MEGLUMINE` `GLUCONATE` `HYDROGEN`（v7；用於多字鹽類，如 `HYDROGEN TARTRATE`）。
     - **刻意不列的酯類字尾**（保留差異）：`ACETATE` `PHOSPHATE` `SUCCINATE` `VALERATE` `PROPIONATE` `DIPROPIONATE` `DECANOATE` `PALMITATE` `BENZOATE` `FUROATE` `CYPIONATE` `ENANTHATE` 等。因此 `CLINDAMYCIN PHOSPHATE`、`HALOPERIDOL DECANOATE`、`METOPROLOL SUCCINATE` 都保留原名。
     - **例外清單**（去除字尾後只剩這些詞時，不去除）：`SODIUM` `POTASSIUM` `CALCIUM` `MAGNESIUM` `ZINC` `IRON` `FERROUS` `FERRIC` `LITHIUM` `ALUMINUM` `ALUMINIUM` `COPPER` `CUPRIC` `BARIUM` `AMMONIUM` `CHLORIDE` `SULFATE` `BROMIDE` `IODIDE` `CITRATE` `HYDROGEN`。
   - 例外：如果去掉字尾後是空字串，或只剩另一個金屬或酸根，就不去除。所以 `SODIUM BICARBONATE`、`MAGNESIUM OXIDE`、`POTASSIUM CHLORIDE` 都保留原名。
@@ -102,9 +104,9 @@ C 是同時符合以下三個條件的 SPL：
 2. 成分集合完全相等
 3. route 全部落在途徑群組內
 
-**完整性是使用 C 的必要前提**，分兩層檢查，任一層不成立，該鍵就是**不可用**，不得進入 ①②③：
-1. **召回涵蓋**：所用的查詢方式必須已經通過 Phase 0 驗證，能涵蓋 §6.1 每一種允許的轉換。
-2. **取回完整**：每個查詢都要取完所有分頁，且實際取回的筆數等於 `meta.results.total`。多個查詢的結果合併後，以**唯一 `set_id`** 計數；同一個 set_id 出現不同 version、出現重複，或資料不一致，都算不成立。
+**完整性是使用 C 的必要前提**（v7：配合 bulk 全量下載改寫）：
+1. **整批完整**：`download.json` 的逐檔筆數加總必須等於 `total_records`，而且每個檔解析後的筆數都要等於清單上的筆數；任何一檔不符 → **整批中止**（見 §7 失敗契約）。全量取得之後，原本的「召回涵蓋」問題就不存在了。
+2. **鍵層級**：C 中的 `set_id` 必須存在且不重複；有重複 → 該鍵不可用。
 
 ### 6.3 五種狀態（狀態語義的**唯一權威定義**；ETL、前端、SW 驗證與各驗收條件都引用本表）
 
@@ -128,9 +130,9 @@ C 是同時符合以下三個條件的 SPL：
   - 同日並列時，以 `set_id` 字典序較小者為準，確保結果可重現。
 - **BW 來源 B**（僅適用於 ①）：
   - R 有 BW → B＝R。
-  - R 沒有 BW、但 C 中有其他仿單有 BW → B 為有 BW 的仿單中，依 R 的同一組規則選出的那一份。畫面標示「代表仿單未列 BW，以下 BW 取自另一份仿單」，並同時列出 B 的來源。
+  - R 沒有 BW、但 C 中有其他仿單有 BW → B 為有 BW 的仿單中，依 R 的同一組規則選出的那一份。畫面標示「代表仿單中未找到 Boxed Warning，以下取自另一份仿單」（v7：措辭與 G3 一致，用「未找到」），並同時列出 B 的來源。
 - **懷孕、哺乳只取自 R**，不跨來源比對：
-  - **懷孕**：`pregnancy` 有內容就採用，否則採用 `teratogenic_effects`。
+  - **懷孕**（v7）：`pregnancy` 有內容就採用；否則從 `use_in_specific_populations` **嚴格擷取 8.1 Pregnancy**（規則與 8.2 相同）；兩者都沒有時，才採用 `teratogenic_effects`。依據：openFDA 對新格式仿單不一定拆出 `pregnancy` 欄位，實測 warfarin 的代表仿單就是這種情況。
   - **哺乳**：先嘗試從 `use_in_specific_populations` 擷取 8.2，擷取成功就採用；否則若 `nursing_mothers` 有內容，就採用它；兩者都沒有 → 狀態為「未找到」。
   - **8.2 擷取規則**：起點是第一個 `8.2 Lactation`（大小寫不拘），終點是之後第一個「`8.` 加數字、再加空白、再接英文標題字」的位置，例如 `8.3 Females`、`8.4 Pediatric`。**括號內的交叉引用**（例如 `( 8.3 )`）不算終點。找不到起點或終點，就是擷取失敗。
   - 擷取失敗、但 R 確實有 `use_in_specific_populations` → 顯示「無法自動擷取，請見 DailyMed」，**不顯示截斷的內容**。
@@ -143,15 +145,15 @@ C 是同時符合以下三個條件的 SPL：
 
 ```
 API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 usLabelKey 或狀態）
-仿單步驟（硬性時限 20 分鐘）：
-  1. 品項 → 鍵（不適用、無法比對的品項不產鍵，直接給狀態）
-  2. 鍵去重
-  3. 依 Phase 0 定案的方式查詢 openFDA（帶 API key、失敗重試加退避、取完所有分頁）
-  4. 依 §6 計算每個鍵的結果
-  5. 輸出 us_label_data.json
+仿單步驟 build_us_label.py（硬性時限 20 分鐘）：
+  1. 讀 drugs_data.json 的 usLabelKey，去重（規則版本不符、0 個鍵 → 中止）
+  2. 取 openFDA download.json 清單並核對筆數
+  3. 逐檔下載 bulk zip（失敗會重試並退避、核對 Content-Length）→ 解析 → 核對筆數 → 只保留 Rx 結構化 label 與所需欄位 → 刪除暫存檔
+  4. 依成分集合建索引，依 §6 計算每個鍵的結果，並以 validate_result 自我檢查
+  5. 原子寫入 us_label_data.json（不含時間戳，可重現），並在 data_version.json 記下 usLabelGeneratedAt
 ```
 
-- `_meta`：`matchRulesVersion`、建置時間、openFDA `meta.last_updated`、本次發布快照的統計。
+- `_meta`：`matchRulesVersion`、`openfdaExportDate`、`labelsTotal`、`rxStructured`、鍵數、各狀態計數。**不放建置時間**，否則每次建置都會產生 diff；建置時間記在 data_version.json 的 `usLabelGeneratedAt`。
 - 每個鍵的結果包含：
   - 狀態、N、M
   - R 的來源資訊（`set_id`、`version`、品名、`application_number`、`effective_time`）
@@ -162,18 +164,17 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
 - 三種日期分開標示：SPL 生效日、openFDA 資料更新日、本站建置日。
 - 統計分兩種：**鍵統計**只計算有產鍵的；**品項統計**涵蓋全部品項。本批的執行統計（含失敗率）寫進 workflow log 與 job summary；回退時不改動舊檔。
 
-### 失敗契約
-- 只有帶 openFDA 錯誤結構（`error.code = NOT_FOUND`）的 404，才算「合法的無結果」→ ③。
-- 其他情況一律算操作失敗：一般 404、429、5xx、逾時、200 但內容不合法。
-- 401／403、缺少 API key、超過 20 分鐘時限 → 仿單步驟中止，處理方式同「失敗率 > 5%」。
-- 一個鍵的所有分頁都成功，這個鍵才算成功。
-- 失敗率的分母是**唯一鍵數**：
-  - 分母為 0 → 步驟失敗，不發布。
-  - 失敗率 **≤ 5%** → 發布本批；失敗的鍵標為不可用，不沿用舊結果。
-  - 失敗率 **> 5%** → 保留舊檔、位元不變，不 commit 仿單檔。
-  - 首次建置就超過門檻 → 不產生仿單檔。
-- **以上所有情況，主資料都照常發布。**
-- log 必須能辨識是哪個鍵、HTTP status 與失敗原因，且不可含 API key。
+### 失敗契約（v7：全有或全無）
+- 以下任一情況 → 步驟以非零碼結束，**不寫入任何檔案**，上一版 us_label_data.json 與 data_version.json 都位元不變：
+  - 清單格式不符、筆數加總不符、出現非預期網址
+  - 任一檔下載失敗（暫時性錯誤重試 3 次後仍失敗；4xx 除 429 外不重試）、長度不符、zip 損毀、筆數不符
+  - 超過 20 分鐘時限
+  - 規則版本不符
+  - 鍵數為 0
+  - 結果違反資料契約（程式錯誤）
+- 首次建置就失敗 → 不產生仿單檔，前端一律顯示「不可用」。
+- workflow 對本步驟設 `continue-on-error`，**主資料照常發布**；本步驟失敗時，commit 步驟另輸出 `::warning::`。
+- 原本以「每個鍵的查詢失敗率 5%」作為門檻的規則，改為 bulk 後已不適用，予以刪除。
 
 ## 8. 前端
 
@@ -246,7 +247,7 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
   - 字尾詞出現在名稱中段時不得刪除；清單外的修飾詞、T1 以外的括號也不得刪除。
 - **A9** 兩份內容不同的 BW，加一份沒有 BW 的 SPL → ①，**N＝3、M＝2**。
   - R 有 BW → 顯示 R 的 BW。
-  - R（NDA）沒有 BW、兩份 ANDA 有 → 顯示 B 的 BW，B 依 §6.4 規則選出，並帶「代表仿單未列 BW」的標示與 B 的來源資訊。
+  - R（NDA）沒有 BW、兩份 ANDA 有 → 顯示 B 的 BW，B 依 §6.4 規則選出，並帶「代表仿單中未找到 Boxed Warning，以下取自另一份仿單」的標示與 B 的來源資訊。
   - 結果不受候選順序影響。
 - **A10** 懷孕、哺乳都只取自 R：其他候選的段落即使不同，也不影響輸出。R 缺少某段落、其他候選有 → 該段落為「未找到」，**不得**改取其他候選的內容。
 - **A11** 台灣「注射劑」：
@@ -261,17 +262,12 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
 - **A14** `warnings_and_cautions` 有內容、但 `boxed_warning` 為空 → ②；輸出中不得出現 `warnings_and_cautions` 的文字。
 
 ### B. 失敗路徑
-- **B1**〔E〕帶 openFDA 錯誤結構的 404 → ③。HTML 的 404，或宣告有後續頁卻取不到 → 不可用。
-- **B2**〔E〕5xx、429、逾時、200 但內容不合法：**每一種**都使該鍵不可用，不得歸 ③，也不得沿用舊結果；其他鍵照常產出。
-  - 重試有上限。
-  - log 要包含鍵與 status，不可含 API key。
-  - 401／403 → 立即中止，不重試。
-- **B3**〔E〕依失敗率分情境驗證：
-  - 低於 5%、恰好 5% → 新檔有更新。
-  - 超過 5% → 舊檔位元不變。
-  - 分母為 0 → 步驟失敗。
-  - 首次建置就超過門檻 → 不產生仿單檔。
-  - 上述情境，加上 401／403 中止、超過 20 分鐘時限，**主資料都要正常產出**。
+- **B1**〔E〕（v7）以下任一情況 → 整批中止，舊檔位元不變：清單筆數加總不符、某檔筆數不符、zip 損毀、清單出現非預期網址、清單格式錯誤。
+- **B2**〔E〕下載：
+  - 5xx 重試至上限後中止。
+  - 4xx 不重試。
+  - 長度不符（中途斷線）要重試。
+- **B3**〔E〕以下任一情況 → 中止且舊檔位元不變，data_version.json 也不變：超過時限、規則版本不符、鍵數為 0。首次建置失敗時不產生檔案。成功時輸出可重現，連續兩次建置的結果位元相同，且不含時間戳。
 - **B4**〔F〕前端遇到以下情況，都要顯示「暫時無法提供」：資料檔 404、非 JSON、型別錯誤、狀態值不合法、缺少該鍵、`matchRulesVersion` 不相容。
   - DOM 中不得出現 BW 原文、「未找到 Boxed Warning」或章節全文。
   - 控制組：合法資料要正確顯示。
@@ -371,6 +367,24 @@ API 37 → build_data.py 既有流程 → drugs_data.json（每個品項加上 u
 ### Phase 1 — 實作
 ETL → 資料檔 → 前端 → SW → workflow，依 §9 驗收。
 
+### Phase 1 結果（2026-10-20）
+- **自動測試**：pytest 412 個、node 109 個，全數通過。
+- **真實資料端到端**（openFDA export 2026-10-16，label 262,897 筆，Rx 結構化 35,645 筆）：
+  - 唯一鍵 4,539 個：① 443、② 696、③ 3,384、不可用 0。
+  - 品項分布：① 3,668、② 4,412、③（產鍵後查無對應）9,956、劑型或成分無法比對 1,321、不適用 2,886、不可用 4（許可證種類未知）。
+  - 大小：**gzip 1.01 MB**（預算 3 MB），未壓縮 4.67 MB，最大單鍵 19 KB。
+  - 建置耗時：本機約 40–75 秒（不含下載）。
+- **③ 偏高的原因**：多數是預期中的排除——美國屬 OTC（acetaminophen、dextromethorphan、外用 terbinafine 等，依 N6 排除），或美國未核准（benzbromarone、domperidone、gliclazide 等）。
+- **實測找出並已修正的系統性漏配**：
+  - TFDA「(AS 鹽類／酯類)」括號寫法（493 個品項），例如 gentamicin 注射劑
+  - CLATHRATE（warfarin）、HEMITARTRATE（zolpidem）、2HCL（metoclopramide）、HYDROGEN TARTRATE
+  - 懷孕 8.1 未拆成獨立欄位（warfarin）
+  - 前三類藥物美國仿單都有 BW，修正前全數漏掉。
+- **抽查**：warfarin（出血）、zolpidem（複雜睡眠行為）、metoclopramide（遲發性運動障礙）、gentamicin（耳／腎毒性）、metformin、olanzapine、isotretinoin、口服與外用 diclofenac、ketorolac 注射劑，BW 都已正確出現；amlodipine、rivastigmine 為 ②。
+- **畫面驗證**：桌面與 390px 寬度都已檢視，沒有水平捲動。
+  - 🇺🇸 在 Windows 上顯示成「us」，已改用 🌐。
+  - 手機版已縮小區塊內距。
+
 ## 11. 後續版本（不在本次範圍）
 
 - 使用者回報錯配
@@ -402,3 +416,4 @@ ETL → 資料檔 → 前端 → SW → workflow，依 §9 驗收。
 | v4 | 新增 G3（只做正面陳述）；② 改為「未找到 BW（不代表沒有）」；章節的「全部未提供」同步修改措辭；A2、B4、D2 跟著調整；§10 記錄 Phase 0 結果 F1、F2 | Phase 0 實測＋使用者決策 |
 | v5 | T2 封閉清單定案（寫法＋水合物＋反離子鹽，酯類保留）；劑型→途徑對照表定案；召回關卡通過；修訂 N8、§6.3「不適用」、A12（API 37 不含中藥） | Phase 0 實測＋使用者確認 |
 | v6 | §6.4 改為「代表仿單」：NDA/BLA 優先、生效日最新；BW 來源規則；懷孕／哺乳只取自 R，取消跨來源一致性比對；哺乳改為嚴格擷取 8.2（openFDA 沒有 `lactation` 欄位），失敗時改放連結；D13 由逐份清單改為代表仿單；A4、A9、A10 跟進 | Phase 1 開工前實測（metformin 106 種 BW 版本、無 `lactation` 欄位）＋使用者決策 |
+| v7 | 資料來源改為 openFDA bulk 全量（D1、D3、D4、§6.2、§7、B1–B3）；失敗契約改為全有或全無；懷孕段落新增 8.1 擷取；BW 來源提示改用「未找到」措辭；T2 清單依真實資料補上（AS 括號、酯類攤平、CLATHRATE、HEMITARTRATE、2HCL、HYDROGEN）；記錄 Phase 1 結果 | Phase 1 實測＋使用者決策（bulk） |
