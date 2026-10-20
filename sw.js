@@ -236,7 +236,21 @@ self.addEventListener('fetch', event => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => offlineFallback(event.request))
     );
   }
 });
+
+// 離線時的靜態資源回應。開啟頁面（navigate）的網址通常是目錄（…/TFDA-drug-info-search/）
+// 或帶查詢字串，但 install 預快取的是 ./index.html——快取鍵不同，原本 caches.match 必然落空。
+// 目錄網址只在線上瀏覽時順手存入，而每次 SW 改版舊快取整個清除，於是「每次更新後、
+// 線上再開一次之前，離線 F5 一律打不開」（2026-10-20 正式站 v8→v9 實際重現）。
+// 找不到原網址時，開啟頁面改以預快取的 index.html 回應；其他資源維持原行為。
+async function offlineFallback(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  if (request.mode === 'navigate') {
+    return caches.match(new URL('./index.html', self.registration.scope).href);
+  }
+  return undefined;
+}
