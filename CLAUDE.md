@@ -26,6 +26,8 @@
 
    **資料檔例外**：`drugs_data.json`、`us_label_data.json` 不進 install 預快取，走 `sw.js` 的 `DATA_FILES`（stale-while-revalidate、每檔各自的驗證函式與 single-flight 鎖）。新增資料檔要加進 `DATA_FILES`，不是 install 清單。
 
+   **離線開啟頁面靠 `offlineFallback()`**：頁面網址是目錄（`…/TFDA-drug-info-search/`），預快取鍵卻是 `./index.html`，兩者不同；SW 每次改版會清掉舊快取，目錄網址的快取也一起消失。所以開啟頁面的請求找不到快取時，要改回預快取的 `index.html`（`tests/sw.spec.mjs` 釘住）。改 install 清單裡的 `index.html` 路徑時，要同步改這裡。
+
 2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v9`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
    **清舊快取只刪自家三個家族前綴**（`OWN_PREFIXES`）：`liangrxdev.github.io` 由所有專案頁共用 origin，Cache Storage 不依 SW scope 隔離，`!ALL_CACHES.includes(k)` 會刪光同網域其他工具的快取（2026-09-12 修正）。不要縮成 `'tfda-'`——TFDA-drug-id-quiz 的快取也以它開頭。
 
