@@ -518,6 +518,20 @@ def price_is_malformed(s):
         return True
 
 
+#: NHI 欄位：缺任一即中止（2026-10-22 review M4）。偵測失敗時原本照常建置，後果各自靜默：
+#: 缺有效起訖日 → 所有歷史紀錄都判為現行有效（舊支付價復活）；缺章節 → 全部品項顯示
+#: 「無特殊給付限制」；缺支付價 → 全部品項比照 0 元剔除。
+REQUIRED_NHI_FIELDS = ("藥品代號", "有效起日", "有效迄日", "給付規定章節", "支付價")
+
+#: API 39／42 的必要欄位。缺了 pkg_dict／img_dict 為空，仿單與外觀圖連結整批消失（M2）。
+REQUIRED_FDA_FIELDS = ("API 39 許可證字號", "API 39 仿單連結", "API 42 許可證字號", "API 42 圖檔連結")
+
+
+def missing_names(mapping):
+    """{名稱: 偵測結果} → 偵測失敗（None／空值）的名稱清單，順序同 mapping。"""
+    return [name for name, value in mapping.items() if not value]
+
+
 # ── 主流程 ──────────────────────────────────────────────────────
 def main():
     print("=" * 60)
@@ -535,6 +549,11 @@ def main():
     print(f"  健保章節對照：{len(nhi_chapters):,}")
     if not raw37:
         sys.exit("\n⚠  API 37 無資料")
+    # 39／42 抓取失敗時 fetch_fda_json 回 []：原本照常建置，仿單／外觀圖連結整批消失而
+    # workflow 綠燈（M2）。中止＝上一版 drugs_data.json 不被覆寫，與 NHI 失敗同一政策
+    empty = missing_names({"API 39（仿單）": raw39, "API 42（外觀圖）": raw42})
+    if empty:
+        sys.exit(f"\n⚠  {'、'.join(empty)} 無資料，中止以防止仿單／外觀圖連結整批消失")
     if not raw_nhi:
         sys.exit("\n⚠  NHI 健保 CSV 無資料（API 可能失效或格式已變更），中止以防止覆蓋正常資料")
 
@@ -574,10 +593,23 @@ def main():
     print(f"       超連結={KN_drugurl} 成分={KN_ingredient} 有效迄日={KN_validto}")
     print(f"       有效起日={KN_validfrom} ATC代碼={KN_atccode} 支付價={KN_price}")
 
-    if not KN_drugcode:
+    missing_nhi = missing_names(dict(zip(REQUIRED_NHI_FIELDS, (
+        KN_drugcode, KN_validfrom, KN_validto, KN_chapter, KN_price))))
+    if missing_nhi:
         all_cols = list(raw_nhi[0].keys()) if raw_nhi else []
         print(f"  ⚠  NHI CSV 所有欄位：{all_cols}", file=sys.stderr)
-        sys.exit("⚠  找不到 NHI 藥品代號欄位，CSV 格式可能已變更，中止以防止覆蓋正常資料")
+        sys.exit(f"⚠  找不到 NHI 欄位：{'、'.join(missing_nhi)}，CSV 格式可能已變更，中止以防止覆蓋正常資料")
+    # 模糊比對的退路會搶到別人的欄位：缺「藥品代號」時「藥品代碼」命中「藥品代碼超連結」、
+    # 缺「給付規定章節」時命中「給付規定章節連結」——欄位都「找到了」，內容卻是 URL
+    nhi_cols = [KN_drugcode, KN_chapter, KN_link, KN_drugurl, KN_chname, KN_enname,
+                KN_ingredient, KN_validto, KN_validfrom, KN_atccode, KN_price]
+    dup = sorted({c for c in nhi_cols if c and nhi_cols.count(c) > 1})
+    if dup:
+        sys.exit(f"⚠  NHI 欄位對應重疊：{'、'.join(dup)} 被多個用途同時採用，CSV 格式可能已變更，中止")
+    missing_fda = missing_names(dict(zip(REQUIRED_FDA_FIELDS, (
+        K39_lic, K39_package, K42_lic, K42_image))))
+    if missing_fda:
+        sys.exit(f"⚠  找不到欄位：{'、'.join(missing_fda)}，格式可能已變更，中止以防止覆蓋正常資料")
 
     # ── Step 2：建立索引 ────────────────────────────────────────
     print("\n【Step 2】建立索引字典...")
@@ -694,6 +726,10 @@ def main():
 
     print(f"  仿單索引：{len(pkg_dict):,}")
     print(f"  圖檔索引：{len(img_dict):,}")
+    # 欄位與資料列都在、每列連結卻是空的（如欄位改名成另一個含相同字樣的欄位）
+    empty_idx = missing_names({"仿單索引": pkg_dict, "圖檔索引": img_dict})
+    if empty_idx:
+        sys.exit(f"⚠  {'、'.join(empty_idx)} 為空，來源格式可能已變更，中止以防止覆蓋正常資料")
     print(f"  健保索引鍵值：{len(nhi_index):,}（含章節 {nhi_with_chapter:,} | 含章節連結 {nhi_with_link:,}）")
 
     if len(nhi_index) < 1000:
