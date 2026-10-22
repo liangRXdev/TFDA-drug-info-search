@@ -266,11 +266,13 @@ def parse_chapters(text: str) -> dict:
 
     # 第二分支：pdftotext -layout 會保留縮排，子章節常以「   8.2.9.Thalidomide」出現，
     # 只認行首會漏抓（115.9.22 版漏 44 個章節，致 36 個品項查無規定，且父章節內容
-    # 溢入子章節）。縮排行要求「編號.」後緊接非空白非數字，避免把「   0.5 mg/kg」
-    # 這類劑量數字誤判為章節。
+    # 溢入子章節）。縮排行要求「編號.」後（可隔空白）接非空白非數字，避免把
+    # 「   0.5 mg/kg」這類劑量數字誤判為章節（劑量另有首段 >20 與「數字後須有點」兩道擋）。
+    # 2026-10-22：原本要求點後「緊接」文字，漏抓「 2.6.4. PCSK9…」「 8.2.4.1. Etanercept…」
+    # 等 9 章，PCSK9 規定被併進 2.6.3、查 2.6.4 只拿到只有標題的 2.6。
     chapter_re = re.compile(
         r'^(?:(\d{1,2}(?:\.\d{1,3}){1,4}\.?)\s*(.+?)'
-        r'|[ \t]+(\d{1,2}(?:\.\d{1,3}){1,4})\.(?=[^\s\d.])(.+?))$',
+        r'|[ \t]+(\d{1,2}(?:\.\d{1,3}){1,4})\.[ \t]*(?=[^\s\d.])(.+?))$',
         re.MULTILINE)
     matches = []
     for m in chapter_re.finditer(text):
@@ -328,22 +330,32 @@ def fda_lic_to_keys(license_str):
 
 
 def nhi_code_to_keys(code):
+    """健保代號 → 許可證號索引鍵（補零版＋去零版）。
+
+    許可證號的位數由代號格式決定，**每個代號只產一組鍵**：
+    - 第 2 碼為字母（新制，如 AC04004710、KC010892B5）→ 取 5 碼
+    - 首碼為 X（罕藥舊制，如 X000224138）→ 取 5 碼
+    - 其餘「1 字母＋數字」舊制（如 A001046100）→ 取 6 碼
+
+    原實作對每個代號同時產 5／6／7 碼前綴，跨許可證撞號（2026-10-22 review 實測
+    約 43 筆錯配）：A001046100 的 5 碼前綴 00104 → 104，被配給罕藥輸 000104
+    （EVRYSDI），卡片頂層顯示 Magnesium Oxide 的章節與 ATC；NC04899238 的
+    6 碼前綴 048992 撞上藥製 048992（Kirtolac）。以現行資料量測，改為依格式
+    取鍵後失去健保歸屬的 14 個品項全為錯配，無正確匹配流失。
+    """
     if not code:
         return set()
-    body = re.sub(r'^[A-Za-z]+', '', code.strip())
-    match = re.fullmatch(r'(\d+)[A-Za-z0-9]*', body)
-    if not match:
+    m = re.fullmatch(r'([A-Za-z])([A-Za-z]?)(\d+)[A-Za-z0-9]*', code.strip())
+    if not m:
         return set()
-    digits = match.group(1)
-    keys = set()
-    for n in (5, 6, 7):
-        # 健保碼末兩碼為包裝／規格碼；部分生物製劑會包含英文字母
-        # （例如 KC010892B5），因此只用開頭連續數字產生許可證索引鍵。
-        if len(body) >= n + 2 and len(digits) >= n:
-            sub = digits[:n]
-            keys.add(sub)
-            keys.add(sub.lstrip('0'))
-    return keys - {''}
+    lead, second, digits = m.groups()
+    n = 5 if (second or lead.upper() == 'X') else 6
+    # 健保碼末兩碼為包裝／規格碼；部分生物製劑會包含英文字母
+    # （例如 KC010892B5），因此只用開頭連續數字產生許可證索引鍵。
+    if len(digits) < n or len(code.strip()) < 1 + len(second) + n + 2:
+        return set()
+    sub = digits[:n]
+    return {sub, sub.lstrip('0')} - {''}
 
 
 def is_raw_material(drug):
@@ -457,7 +469,11 @@ def nhi_is_current(valid_from, valid_to, today):
 def select_primary_match(matches):
     """從已排序的 NHI 匹配清單挑出「主要紀錄」，供卡片頂層摘要顯示。
 
-    確定性規則：優先取有給付規定章節者，同條件下取代號最小者；皆無則取第一筆。
+    確定性規則：
+    1. 有成分已確認（verified）者時，只在 verified 中挑——code-only 可能是撞號錯配，
+       不可讓它的章節／ATC 頂替真正的主紀錄（2026-10-22：EVRYSDI 頂層曾顯示
+       Magnesium Oxide 的章節 7.1 與 ATC A02AA02）
+    2. 同一池中優先取有給付規定章節者，再取代號最小者
     原實作依賴 set／dict 迭代順序，同一份輸入在不同次建置會選出不同紀錄，
     導致頂層 nhiChapter／nhiAtcCode 與明細表格對不起來。
 
@@ -465,8 +481,10 @@ def select_primary_match(matches):
     """
     if not matches:
         return {}
-    with_chapter = [m for m in matches if m.get("chapter")]
-    pool = with_chapter or matches
+    verified = [m for m in matches if m.get("confidence") == "verified"]
+    pool = verified or matches
+    with_chapter = [m for m in pool if m.get("chapter")]
+    pool = with_chapter or pool
     return min(pool, key=lambda m: m.get("code", ""))
 
 

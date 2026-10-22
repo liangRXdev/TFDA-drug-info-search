@@ -1,4 +1,4 @@
-const STATIC_CACHE = 'tfda-static-v9';   // index.html／app.js 有異動時須同步提升（見 README）
+const STATIC_CACHE = 'tfda-static-v10';   // index.html／app.js 有異動時須同步提升（見 README）
 const DATA_CACHE   = 'tfda-data-v2';
 const FONT_CACHE   = 'tfda-fonts-v2';
 const ALL_CACHES   = [STATIC_CACHE, DATA_CACHE, FONT_CACHE];

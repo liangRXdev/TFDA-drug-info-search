@@ -84,8 +84,31 @@ def test_nhi_code_to_keys_requires_minimum_length():
 
 
 def test_nhi_code_to_keys_is_bounded():
-    """單一代號產生的 key 數量須有上限（5/6/7 碼 × 補零/去零）"""
-    assert len(nhi_code_to_keys("BC21571100")) <= 6
+    """單一代號只產一組鍵（補零／去零），依代號格式決定位數"""
+    assert len(nhi_code_to_keys("BC21571100")) <= 2
+
+
+# ── 跨許可證撞號迴歸（2026-10-22 review，實際錯配案例）──────────
+@pytest.mark.parametrize("lic, code", [
+    ("衛部罕藥輸字第000104號", "A001046100"),   # EVRYSDI ↔ Magnesium Oxide（5 碼前綴 00104）
+    ("衛署藥製字第048992號",   "NC04899238"),   # Kirtolac ↔ Lactated Ringer's（6 碼前綴 048992）
+    ("衛署藥製字第001535號",   "N015352212"),   # S.S ANTICOLD ↔ CONTAMIN（5 碼前綴 01535）
+    ("衛部藥輸字第028122號",   "NC02812212"),   # PeriOlimel ↔ MELERMIN-H（6 碼前綴 028122）
+    ("衛部菌疫輸字第001280號", "A012804100"),   # mRESVIA ↔ SUPITON（5 碼前綴 01280）
+])
+def test_cross_license_collisions_do_not_match(lic, code):
+    assert not (fda_lic_to_keys(lic) & nhi_code_to_keys(code))
+
+
+@pytest.mark.parametrize("lic, code", [
+    ("衛部罕藥輸字第000104號",   "VC00104100"),  # EVRYSDI 正確代號（新制 5 碼）
+    ("衛部罕藥製字第000022號",   "X000224138"),  # 罕藥舊制 X 開頭為 5 碼
+    ("衛部罕菌疫輸字第000037號", "X000376255"),  # NEXVIAZYME
+    ("衛署藥製字第001046號",     "A001046100"),  # 舊制 1 字母＋6 碼
+    ("衛部菌疫輸字第001089號",   "KC010892B5"),
+])
+def test_format_based_keys_keep_true_matches(lic, code):
+    assert fda_lic_to_keys(lic) & nhi_code_to_keys(code)
 
 
 # ── ingredient_core ────────────────────────────────────────────
@@ -175,6 +198,20 @@ def test_primary_picks_lowest_code_among_those_with_chapter():
 def test_primary_falls_back_to_lowest_code_when_none_have_chapter():
     matches = [m("BC999"), m("AC001")]
     assert select_primary_match(matches)["code"] == "AC001"
+
+
+def test_primary_prefers_verified_over_code_only_with_chapter():
+    """code-only 可能是撞號錯配，不得以其章節／ATC 頂替 verified 主紀錄"""
+    wrong = {**m("A001046100", chapter="7.1.", atc="A02AA02"), "confidence": "code-only"}
+    right = {**m("VC00104100", atc="M09AX10"), "confidence": "verified"}
+    assert select_primary_match([wrong, right])["code"] == "VC00104100"
+
+
+def test_primary_among_verified_still_prefers_chapter():
+    a = {**m("AC001"), "confidence": "verified"}
+    b = {**m("BC002", chapter="1.6.4."), "confidence": "verified"}
+    c = {**m("AA000", chapter="9.9."), "confidence": "code-only"}
+    assert select_primary_match([a, b, c])["code"] == "BC002"
 
 
 def test_primary_is_order_independent():

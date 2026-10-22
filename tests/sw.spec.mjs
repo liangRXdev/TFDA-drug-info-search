@@ -73,43 +73,43 @@ const indexHtml = () => new Response('<!doctype html>INDEX', { status: 200 });
 
 describe('離線開啟頁面', () => {
   test('目錄網址不在快取（SW 剛改版）→ 改回預快取的 index.html', async () => {
-    const sw = makeSw({ store: { 'tfda-static-v9': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
+    const sw = makeSw({ store: { 'tfda-static-v10': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
     const resp = await dispatch(sw, SCOPE, 'navigate');
     assert.ok(resp, '不得回傳 undefined（那會讓瀏覽器顯示離線錯誤頁）');
     assert.match(await resp.text(), /INDEX/);
   });
 
   test('帶查詢字串的頁面網址也能離線開啟', async () => {
-    const sw = makeSw({ store: { 'tfda-static-v9': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
+    const sw = makeSw({ store: { 'tfda-static-v10': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
     const resp = await dispatch(sw, SCOPE + '?q=amlodipine', 'navigate');
     assert.match(await resp.text(), /INDEX/);
   });
 
   test('原網址已在快取 → 用原網址的版本（不被 index.html 蓋掉）', async () => {
     const own = new Response('DIR-COPY', { status: 200 });
-    const sw = makeSw({ store: { 'tfda-static-v9': new Map([[SCOPE, own], [SCOPE + 'index.html', indexHtml()]]) } });
+    const sw = makeSw({ store: { 'tfda-static-v10': new Map([[SCOPE, own], [SCOPE + 'index.html', indexHtml()]]) } });
     assert.equal(await (await dispatch(sw, SCOPE, 'navigate')).text(), 'DIR-COPY');
   });
 
   test('非開啟頁面的資源找不到快取 → 不改回 index.html（避免把 HTML 當成 JS 或圖片）', async () => {
-    const sw = makeSw({ store: { 'tfda-static-v9': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
+    const sw = makeSw({ store: { 'tfda-static-v10': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
     assert.equal(await dispatch(sw, SCOPE + 'icons/icon-192.png', 'no-cors'), undefined);
     assert.equal(await dispatch(sw, SCOPE + 'app.js', 'no-cors'), undefined);
   });
 
   test('已快取的靜態資源離線照常回傳', async () => {
     const app = new Response('APPJS', { status: 200 });
-    const sw = makeSw({ store: { 'tfda-static-v9': new Map([[SCOPE + 'app.js', app]]) } });
+    const sw = makeSw({ store: { 'tfda-static-v10': new Map([[SCOPE + 'app.js', app]]) } });
     assert.equal(await (await dispatch(sw, SCOPE + 'app.js')).text(), 'APPJS');
   });
 });
 
 describe('線上行為不變', () => {
   test('開啟頁面仍為 network-first，並把該網址寫入靜態快取', async () => {
-    const sw = makeSw({ online: true, store: { 'tfda-static-v9': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
+    const sw = makeSw({ online: true, store: { 'tfda-static-v10': new Map([[SCOPE + 'index.html', indexHtml()]]) } });
     const resp = await dispatch(sw, SCOPE, 'navigate');
     assert.equal(await resp.text(), `network:${SCOPE}`);
-    assert.ok(sw.store['tfda-static-v9'].has(SCOPE), '線上瀏覽時應順手快取目錄網址');
+    assert.ok(sw.store['tfda-static-v10'].has(SCOPE), '線上瀏覽時應順手快取目錄網址');
   });
 
   test('預快取鍵與 install 清單一致（./index.html 解析後等於離線退回的網址）', () => {

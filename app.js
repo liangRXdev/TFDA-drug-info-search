@@ -565,6 +565,7 @@ function buildCard(drug, keyword = '') {
         const detailsHtml = (drug.chapterDetails || []).map(d => `
             <details class="chapter-details" open>
                 <summary><strong>${escapeHtml(d.chapter)}</strong> ${escapeHtml(d.title || '')}</summary>
+                ${d.matched ? `<div class="info-content">⚠ 本站未解析到 ${escapeHtml(d.chapter)} 章節全文，以下為上層 ${escapeHtml(d.matched)} 的內容；請以章節 PDF 為準。</div>` : ''}
                 <pre class="chapter-content">${escapeHtml(d.content || '')}</pre>
             </details>
         `).join('');

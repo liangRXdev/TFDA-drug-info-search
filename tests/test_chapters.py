@@ -177,3 +177,46 @@ def test_indented_dose_numbers_are_not_chapters():
     ch = parse_chapters(INDENTED)
     assert "0.5" not in ch and "2.3" not in ch
     assert "0.5 mg/kg" in ch["8.2.9"]["content"]
+
+
+# ── 縮排＋點後空格的標題（2026-10-22 review：漏抓 2.6.4、8.2.4.1 等 9 章）──
+INDENTED_SPACED = """2.6.降血脂藥物
+ 2.6.3. Ezetimibe 複方
+限用於 statin 治療後 LDL-C 仍未達標者。
+ 2.6.4. PCSK9 血脂調節劑（如 Repatha）
+限用於家族性高膽固醇血症。
+   2.6.4.1. Evolocumab
+需經事前審查。
+8.2.4.生物製劑
+ 8.2.4.1. Etanercept（如 Enbrel）
+限類風濕性關節炎。
+   1.5 mg/kg 每週一次
+   2.5. mg 不應成為章節
+"""
+
+
+def test_indented_heading_with_space_after_dot_is_parsed():
+    ch = parse_chapters(INDENTED_SPACED)
+    assert {"2.6.3", "2.6.4", "2.6.4.1", "8.2.4.1"} <= set(ch)
+    assert ch["2.6.4"]["title"].startswith("PCSK9")
+    assert ch["8.2.4.1"]["title"].startswith("Etanercept")
+
+
+def test_spaced_heading_does_not_bleed_into_previous_chapter():
+    """修正前 PCSK9 規定整段併入 2.6.3"""
+    ch = parse_chapters(INDENTED_SPACED)
+    assert "PCSK9" not in ch["2.6.3"]["content"]
+    assert "家族性高膽固醇血症" in ch["2.6.4"]["content"]
+    assert "事前審查" not in ch["2.6.4"]["content"]
+
+
+def test_spaced_heading_lookup_no_longer_falls_back_to_parent():
+    ch = parse_chapters(INDENTED_SPACED)
+    [hit] = lookup_chapter("2.6.4.", ch)
+    assert hit["chapter"] == "2.6.4" and "matched" not in hit
+
+
+def test_dose_numbers_still_not_chapters_with_spaced_rule():
+    ch = parse_chapters(INDENTED_SPACED)
+    assert "1.5" not in ch
+    assert "1.5 mg/kg" in ch["8.2.4.1"]["content"]
