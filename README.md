@@ -49,7 +49,7 @@ Designed around the lookup pain points of clinical staff and the public, the fro
 ## Data Pipeline
 
 Data updates follow this automated flow:
-1. **Trigger:** GitHub Actions runs every Sunday at 18:00 UTC (Monday 02:00 Taiwan). It can also be started manually via `workflow_dispatch`, and runs on pushes to main that change the ETL scripts.
+1. **Trigger:** GitHub Actions runs every Monday at 01:37 UTC (09:37 Taiwan), with a Tuesday 02:37 UTC (10:37 Taiwan) fallback. It can also be started manually via `workflow_dispatch`, and runs on pushes to main that change the ETL scripts.
 2. **Setup:** Installs the required Python modules from `requirements.txt`.
 3. **Fetch:** `build_data.py` sends HTTP GET requests to the TFDA server and downloads the large raw JSON datasets.
 4. **Cleanse:** Removes fields the frontend doesn't need to minimize size, and builds an integrated structure keyed on the license number.
