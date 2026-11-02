@@ -49,7 +49,7 @@
 ## 資料處理流程步驟 (Data Pipeline)
 
 系統資料更新遵循以下自動化流程：
-1. **排程觸發 (Trigger)：** GitHub Actions 每週日 UTC 18:00（台灣週一 02:00）啟動；`workflow_dispatch` 可手動觸發，push 到 main 且改動 ETL 腳本時也會觸發。
+1. **排程觸發 (Trigger)：** GitHub Actions 每週一 UTC 01:37（台灣週一 09:37）啟動，週二 UTC 02:37（台灣 10:37）備援；`workflow_dispatch` 可手動觸發，push 到 main 且改動 ETL 腳本時也會觸發。
 2. **依賴安裝 (Setup)：** 讀取 `requirements.txt` 安裝必要之 Python 模組。
 3. **資料拉取 (Fetch)：** `build_data.py` 向 TFDA 伺服器發出 HTTP GET 請求，下載原始大型 JSON 資料集。
 4. **資料清洗 (Cleanse)：** 移除前端展示無需之冗餘欄位，將資料體積極小化，並建立以「許可證字號」為關聯鍵之整合結構。

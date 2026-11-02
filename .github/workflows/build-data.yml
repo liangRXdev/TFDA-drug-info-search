@@ -3,7 +3,10 @@ name: Build Drug Database
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * 0'       # 每週日 UTC 18:00 = 台灣週一 02:00
+    # 排程落在台灣白天：2026-10-25／11-01 原排程（台灣週一清晨）下載 NHI CSV 皆 RemoteDisconnected，
+    # API 37／39／42 同次正常。NHI-drug-price-history 同端點有相同紀錄。避開整點以減少 GitHub 排程延遲。
+    - cron: '37 1 * * 1'       # 主：UTC 週一 01:37 = 台灣週一 09:37
+    - cron: '37 2 * * 2'       # 備援：UTC 週二 02:37 = 台灣週二 10:37
   push:
     # 限定 main：本 workflow 會 git push 資料 commit，若不限分支，
     # 任何功能分支推送 build_data.py 都會跑完整建置並把 20MB+ 的資料
