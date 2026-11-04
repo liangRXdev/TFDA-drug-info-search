@@ -652,6 +652,13 @@ def main():
     dup = sorted({c for c in nhi_cols if c and nhi_cols.count(c) > 1})
     if dup:
         sys.exit(f"⚠  NHI 欄位對應重疊：{'、'.join(dup)} 被多個用途同時採用，CSV 格式可能已變更，中止")
+    # 欄位名在、整欄卻全空：上面的偵測會通過。有效起訖日全空時空白＝「無期限」，所有歷史
+    # 紀錄都判為現行有效（舊支付價復活），日期失敗率卻是 0%，MAX_BAD_DATE_RATIO 擋不到
+    blank_nhi = [name for name, col in zip(REQUIRED_NHI_FIELDS, (
+        KN_drugcode, KN_validfrom, KN_validto, KN_chapter, KN_price))
+        if not any((r.get(col) or "").strip() for r in raw_nhi)]
+    if blank_nhi:
+        sys.exit(f"⚠  NHI 欄位整欄空白：{'、'.join(blank_nhi)}，CSV 格式可能已變更，中止以防止覆蓋正常資料")
     missing_fda = missing_names(dict(zip(REQUIRED_FDA_FIELDS, (
         K39_lic, K39_package, K42_lic, K42_image))))
     if missing_fda:

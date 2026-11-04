@@ -76,3 +76,11 @@ def test_all_links_blank_aborts(run_main):
 
 def test_missing_names():
     assert bd.missing_names({"a": "x", "b": None, "c": [], "d": [1]}) == ["b", "c"]
+
+
+@pytest.mark.parametrize("col", ["藥品代號", "有效起日", "有效迄日", "給付規定章節", "支付價"])
+def test_blank_nhi_column_aborts(run_main, col):
+    """欄位名在、整欄卻全空（2026-11-05 review）：欄位偵測會通過。有效起訖日全空最危險——
+    空白視為「無期限」，所有歷史紀錄都判為現行有效（舊支付價復活），日期失敗率卻是 0%。"""
+    msg = run_main([API37_ROW], [API39_ROW], [API42_ROW], [dict(NHI_ROW, **{col: ""})])
+    assert col in msg and "空白" in msg
