@@ -47,15 +47,23 @@ def _nhi_without(col):
 ])
 def test_empty_fda_source_aborts(run_main, label, raw39, raw42):
     msg = run_main([API37_ROW], raw39, raw42, [NHI_ROW])
-    assert label in msg
+    # 須是「無資料」這道守門擋下：只斷言 label 時，拿掉它也會被下游「找不到欄位：
+    # API 39 許可證字號」順帶擋住而維持綠燈（2026-11-05 突變測試）
+    assert label in msg and "無資料" in msg
 
 
-@pytest.mark.parametrize("col", bd.REQUIRED_NHI_FIELDS)
+# 清單寫死，不引用 bd.REQUIRED_NHI_FIELDS：引用常數時把常數縮減成只剩「藥品代號」，
+# 參數化也跟著縮減，測試仍全綠（2026-11-05 突變測試）
+@pytest.mark.parametrize("col", ["藥品代號", "有效起日", "有效迄日", "給付規定章節", "支付價"])
 def test_missing_nhi_column_aborts(run_main, col):
     """五個欄位各缺一次：缺任何一個都會讓某種錯誤資料靜默上線（見 REQUIRED_NHI_FIELDS）。"""
     msg = run_main([API37_ROW], [API39_ROW], [API42_ROW], _nhi_without(col))
-    # 藥品代號／給付規定章節缺席時，模糊比對會改抓「…超連結」「…連結」：由重疊檢查擋下
-    assert col in msg or "重疊" in msg
+    # 藥品代號／給付規定章節缺席時，模糊比對會改抓「…超連結」「…連結」：由重疊檢查擋下。
+    # 須斷言是哪道守門：只斷言欄位名時，拿掉這兩道仍會被下游「整欄空白」順帶擋住而全綠
+    if col in ("藥品代號", "給付規定章節"):
+        assert "重疊" in msg
+    else:
+        assert "找不到 NHI 欄位" in msg and col in msg
 
 
 @pytest.mark.parametrize("raw39,raw42,expected", [
@@ -76,3 +84,11 @@ def test_all_links_blank_aborts(run_main):
 
 def test_missing_names():
     assert bd.missing_names({"a": "x", "b": None, "c": [], "d": [1]}) == ["b", "c"]
+
+
+@pytest.mark.parametrize("col", ["藥品代號", "有效起日", "有效迄日", "給付規定章節", "支付價"])
+def test_blank_nhi_column_aborts(run_main, col):
+    """欄位名在、整欄卻全空（2026-11-05 review）：欄位偵測會通過。有效起訖日全空最危險——
+    空白視為「無期限」，所有歷史紀錄都判為現行有效（舊支付價復活），日期失敗率卻是 0%。"""
+    msg = run_main([API37_ROW], [API39_ROW], [API42_ROW], [dict(NHI_ROW, **{col: ""})])
+    assert col in msg and "空白" in msg

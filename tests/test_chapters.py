@@ -220,3 +220,12 @@ def test_dose_numbers_still_not_chapters_with_spaced_rule():
     ch = parse_chapters(INDENTED_SPACED)
     assert "1.5" not in ch
     assert "1.5 mg/kg" in ch["8.2.4.1"]["content"]
+
+
+def test_indented_heading_does_not_span_lines():
+    """點後只允許同一行的空白（[ \\t]*），不可用 \\s* 跨到下一行把內文當標題
+    （2026-11-05 突變測試：改成 \\s* 原本全綠）"""
+    text = "2.6.3. 甲\n內容甲\n   2.6.4.\n   限用於下列情形\n"
+    ch = parse_chapters(text)
+    assert "2.6.4" not in ch
+    assert "限用於下列情形" in ch["2.6.3"]["content"]
