@@ -58,8 +58,12 @@ def test_empty_fda_source_aborts(run_main, label, raw39, raw42):
 def test_missing_nhi_column_aborts(run_main, col):
     """五個欄位各缺一次：缺任何一個都會讓某種錯誤資料靜默上線（見 REQUIRED_NHI_FIELDS）。"""
     msg = run_main([API37_ROW], [API39_ROW], [API42_ROW], _nhi_without(col))
-    # 藥品代號／給付規定章節缺席時，模糊比對會改抓「…超連結」「…連結」：由重疊檢查擋下
-    assert col in msg or "重疊" in msg
+    # 藥品代號／給付規定章節缺席時，模糊比對會改抓「…超連結」「…連結」：由重疊檢查擋下。
+    # 須斷言是哪道守門：只斷言欄位名時，拿掉這兩道仍會被下游「整欄空白」順帶擋住而全綠
+    if col in ("藥品代號", "給付規定章節"):
+        assert "重疊" in msg
+    else:
+        assert "找不到 NHI 欄位" in msg and col in msg
 
 
 @pytest.mark.parametrize("raw39,raw42,expected", [
