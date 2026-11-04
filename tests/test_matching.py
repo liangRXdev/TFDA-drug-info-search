@@ -263,3 +263,65 @@ def test_detect_field_returns_none_when_absent(rows):
 
 def test_detect_field_no_match_returns_none():
     assert detect_field([{"完全無關": 1}], "藥品代號") is None
+
+
+# ── 健保代號首碼 ↔ 許可證類別（2026-11-05 review）────────────────
+# 位數規則只比對「號碼」，不比對類別：藥製／藥輸／內衛藥製／菌疫／罕藥各自從 1 起編號，
+# 號碼相同即撞號。以 2026-11-03 drugs_data.json 實測仍有 46 筆類別不符的匹配
+# （16 筆被選為頂層主紀錄），且多為 code-only——寬鬆成分比對擋不下。
+from build_data import license_kind, nhi_code_kind_compatible  # noqa: E402
+
+
+@pytest.mark.parametrize("lic, code", [
+    ("衛署藥製字第027289號",   "BC27289100"),  # WINSOLVE UREA CREAM ↔ Olumiant（B=藥輸）
+    ("衛署藥製字第024437號",   "BC24437100"),  # SODIUM CHLORIDE INJ ↔ Vesicare
+    ("衛部菌疫輸字第001085號", "AA01085209"),  # Bavencio ↔ SODIUM CHLORIDE INJ（A=藥製）
+    ("衛署藥製字第001085號",   "KC01085229"),  # SODIUM CHLORIDE INJ ↔ Bavencio（K=菌疫輸）
+    ("內衛藥製字第011931號",   "AC11931100"),  # BIOMYCIN NASAL SPRAY ↔ PREDNISOLONE TAB（verified）
+    ("衛署藥製字第011931號",   "NC11931435"),  # PREDNISOLONE TAB ↔ BIOMYCIN（N=內衛藥製，verified）
+    ("衛部藥輸字第028017號",   "AC28017100"),  # 外用 AMMELTZ ↔ DICLOREN E.C. 錠（verified）
+    ("衛署成製字第009417號",   "N009417277"),  # 中藥成藥 ↔ LACTATED RINGER'S
+    ("衛署罕藥製字第000007號", "VC00007100"),  # ZINCA ↔ AGRYLIN（V=罕藥輸）
+    ("衛署菌疫製字第000009號", "W000009100"),  # 抗蛇毒血清 ↔ WILIZIN（W=罕藥製）
+])
+def test_cross_kind_collisions_are_rejected(lic, code):
+    assert fda_lic_to_keys(lic) & nhi_code_to_keys(code), "前提：號碼鍵確實相撞"
+    assert not nhi_code_kind_compatible(code, lic)
+
+
+@pytest.mark.parametrize("lic, code", [
+    ("衛署藥製字第001046號",     "A001046100"),
+    ("衛部藥製字第059678號",     "AC59678100"),
+    ("衛署藥輸字第021571號",     "BC21571100"),
+    ("內衛藥製字第004899號",     "NC04899238"),
+    ("衛署菌疫製字第000113號",   "JC00113100"),
+    ("衛部菌疫輸字第001089號",   "KC010892B5"),
+    ("衛部罕藥輸字第000104號",   "VC00104100"),
+    ("衛部罕藥製字第000022號",   "WC00022100"),
+    ("衛部罕藥製字第000022號",   "X000224138"),   # X：罕藥舊制，涵蓋四種罕藥類別
+    ("衛部罕菌疫輸字第000037號", "X000376255"),
+    ("衛部罕菌疫輸字第000037號", "YC00037221"),
+    ("衛署罕菌疫製字第000001號", "ZC00001100"),
+])
+def test_same_kind_matches_are_kept(lic, code):
+    assert nhi_code_kind_compatible(code, lic)
+
+
+@pytest.mark.parametrize("lic, code", [
+    ("衛署藥製字第001046號", "C001046100"),   # 未知首碼：不據以排除（查不到比誤配更危險）
+    ("某種新格式第001046號", "A001046100"),   # 許可證類別抽不出：不據以排除
+])
+def test_unknown_kind_fails_open(lic, code):
+    assert nhi_code_kind_compatible(code, lic)
+
+
+@pytest.mark.parametrize("lic, kind", [
+    ("衛署藥製字第001046號", "藥製"),
+    ("衛部藥製字第059678號", "藥製"),
+    ("內衛藥製字第004899號", "內衛藥製"),   # 內衛與衛署藥製號碼區間重疊，不可合併
+    ("衛部罕菌疫輸字第000037號", "罕菌疫輸"),
+    ("衛部藥陸輸字第000123號", "藥陸輸"),
+    ("沒有類別", None),
+])
+def test_license_kind(lic, kind):
+    assert license_kind(lic) == kind

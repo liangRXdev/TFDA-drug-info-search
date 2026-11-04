@@ -358,6 +358,52 @@ def nhi_code_to_keys(code):
     return {sub, sub.lstrip('0')} - {''}
 
 
+#: 健保代號首碼 → 可對應的許可證類別（license_kind() 的輸出）。
+#: 推論自 2026-11-03 drugs_data.json 的 verified 匹配（A 藥製 10,700、B 藥輸 1,710、
+#: N 內衛藥製 543、K 菌疫輸 359、V 罕藥輸 67、Y 罕菌疫輸 42、J 菌疫製 9、W 罕藥製 9、
+#: Z 罕菌疫製 1；X 為罕藥舊制，橫跨罕藥製與罕菌疫輸）；反例全是撞號錯配。
+#: 不在表中的首碼一律不據以排除——查不到比偶發誤配更危險。
+NHI_LEAD_KINDS = {
+    "A": {"藥製"},
+    "B": {"藥輸"},
+    "N": {"內衛藥製"},
+    "J": {"菌疫製"},
+    "K": {"菌疫輸"},
+    "V": {"罕藥輸"},
+    "W": {"罕藥製"},
+    "X": {"罕藥製", "罕藥輸", "罕菌疫製", "罕菌疫輸"},
+    "Y": {"罕菌疫輸"},
+    "Z": {"罕菌疫製"},
+}
+
+
+def license_kind(lic):
+    """許可證字號 → 類別（「衛署／衛部」視為同一序列，「內衛」保留）；抽不出回 None。
+
+    衛署→衛部改制後號碼延續（衛部藥製自約 058000 起），故可合併；內衛藥製則自 1 起
+    另行編號、與衛署藥製區間重疊，健保代號亦以 N（而非 A）區分，不可合併。
+    """
+    m = re.search(r'^\s*(.*?)字第', lic or "")
+    if not m or not m.group(1):
+        return None
+    kind = m.group(1)
+    return kind if kind.startswith("內衛") else re.sub(r'^(衛署|衛部)', '', kind)
+
+
+def nhi_code_kind_compatible(code, lic):
+    """健保代號首碼與許可證類別是否相容。
+
+    nhi_code_to_keys()／fda_lic_to_keys() 只比對號碼；各類別自 1 起編號，號碼相同的
+    不同類別許可證必然撞號（2026-11-05 review：46 筆，含 3 筆 verified——同成分不同
+    品項，如外用 AMMELTZ ↔ DICLOREN 腸溶錠）。首碼未知或類別抽不出時回 True（不排除）。
+    """
+    allowed = NHI_LEAD_KINDS.get((code or "").strip()[:1].upper())
+    kind = license_kind(lic)
+    if allowed is None or kind is None:
+        return True
+    return kind in allowed
+
+
 def is_raw_material(drug):
     licType = (drug.get('許可證種類') or '').strip()
     usage   = (drug.get('用法用量')   or '').strip()
@@ -747,6 +793,7 @@ def main():
                                     K37_indication, K37_ingredient, K37_usage) if f]
     raw_count = matched_nhi = with_chapter = with_chapter_link = 0
     conf_verified = conf_code_only = 0   # 成分比對信心度統計（弱匹配規模需可觀測）
+    kind_mismatch = 0                    # 號碼相撞但代號首碼與許可證類別不符而排除者
     us_label_stats = {}                  # 美國仿單參考：品項統計（產鍵／各狀態）
     for drug in raw37:
         lic = (drug.get("許可證字號") or "").strip()
@@ -777,6 +824,9 @@ def main():
                 for c in nhi_index.get(k, []):
                     code = c.get("nhiDrugCode", "")
                     if not code or code in seen_codes:
+                        continue
+                    if not nhi_code_kind_compatible(code, lic):
+                        kind_mismatch += 1
                         continue
                     conf = match_confidence(fda_ingr, c.get("nhiIngredient", ""))
                     if conf == 'none':
@@ -858,6 +908,7 @@ def main():
     if conf_total:
         print(f"  成分比對：verified {conf_verified:,}（{conf_verified/conf_total:.1%}）| "
               f"code-only {conf_code_only:,}（{conf_code_only/conf_total:.1%}，僅代號匹配未驗證成分）")
+    print(f"  健保代號類別不符（號碼相撞、已排除）：{kind_mismatch:,} 筆")
     print(f"  美國仿單參考（品項）：{', '.join(f'{k} {v:,}' for k, v in sorted(us_label_stats.items()))}")
 
     # ── Step 4：輸出 ────────────────────────────────────────────
