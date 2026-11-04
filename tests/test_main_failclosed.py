@@ -47,10 +47,14 @@ def _nhi_without(col):
 ])
 def test_empty_fda_source_aborts(run_main, label, raw39, raw42):
     msg = run_main([API37_ROW], raw39, raw42, [NHI_ROW])
-    assert label in msg
+    # 須是「無資料」這道守門擋下：只斷言 label 時，拿掉它也會被下游「找不到欄位：
+    # API 39 許可證字號」順帶擋住而維持綠燈（2026-11-05 突變測試）
+    assert label in msg and "無資料" in msg
 
 
-@pytest.mark.parametrize("col", bd.REQUIRED_NHI_FIELDS)
+# 清單寫死，不引用 bd.REQUIRED_NHI_FIELDS：引用常數時把常數縮減成只剩「藥品代號」，
+# 參數化也跟著縮減，測試仍全綠（2026-11-05 突變測試）
+@pytest.mark.parametrize("col", ["藥品代號", "有效起日", "有效迄日", "給付規定章節", "支付價"])
 def test_missing_nhi_column_aborts(run_main, col):
     """五個欄位各缺一次：缺任何一個都會讓某種錯誤資料靜默上線（見 REQUIRED_NHI_FIELDS）。"""
     msg = run_main([API37_ROW], [API39_ROW], [API42_ROW], _nhi_without(col))
