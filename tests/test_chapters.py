@@ -244,11 +244,11 @@ def test_duplicate_numbers_are_reported(capsys):
     parse_chapters(DUP_SAMPLE)
     out = capsys.readouterr().out
     assert "章節編號重複：1 個" in out
-    assert "2.6.4 ×2" in out and "之規定辦理" in out and "PCSK9" in out
+    assert "2.6.4 ×2" in out and "✗之規定辦理" in out and "✓PCSK9" in out
 
 
-def test_duplicate_keeps_last_occurrence_behaviour():
-    """行為不變：後出現者覆蓋（是否改為先者保留，待真實 PDF 輸出判斷）。"""
+def test_adjacent_fragment_then_real_keeps_real():
+    """片段緊接在真章節前（10.7.4 型）：兩者順序分數相同，保留後者。"""
     assert parse_chapters(DUP_SAMPLE)["2.6.4"]["title"].startswith("PCSK9")
 
 
@@ -261,3 +261,92 @@ def test_duplicate_chapter_numbers_counts():
     from build_data import duplicate_chapter_numbers
     m = [(0, "1.1", "a"), (1, "1.2", "b"), (2, "1.1", "c"), (3, "1.1", "d")]
     assert duplicate_chapter_numbers(m) == {"1.1": 3}
+
+
+# 2026-11-09 真實 PDF 的重複型態與出現順序（nhi_payment_rules.pdf，7 個重複）。
+# 順序須照實：3.x／7.2.1／9.32.2 的片段在真章節「之後」，2.18／10.7.4 在「之前」。
+# 原「後出現者覆蓋」選錯 5 個：3.1／3.2／3.3（PCSK9 申請表）、7.2.1（引用句）、9.32.2（附件表）
+REAL_PATTERN = """2.1.1. 抗凝血劑總則
+   2.18. 歲以上非瓣膜性心房纖維顫動病患
+2.1.2. Dabigatran
+內文。
+2.6.3. Statin 類
+內文。
+2.6.4. PCSK9 血脂調節劑
+內文。
+2.17. 其他心血管藥
+2.18. Captopril 內服液劑
+真正的 Captopril 規定。
+3. 營養劑
+3.1. 靜脈營養輸液 Parenteral nutritions
+內文。
+3.2. 維生素 Vitamins
+內文。
+3.3. 其他 Miscellaneous
+內文。
+7.2. 止吐劑
+7.2.1. Serotonin antagonists（如 ondansetron）
+真正的止吐規定。
+7.2.2. NK1 antagonists
+   7.2.1. 規範給予 serotonin antagonist。
+9.32.1. Imatinib
+9.32.2. Nilotinib 150mg(如 Tasigna 150mg)
+真正的 Nilotinib 規定。
+9.32.3. Dasatinib
+10.7.3. Lamivudine
+   10.7.4. 之 1至4項。
+10.7.4. Adefovir dipivoxil (如 Hepsera Tablets 10mg)
+真正的 Adefovir 規定。
+10.7.5. Entecavir
+11.1. 附件 PCSK9 申請表
+3.1 重大心血管疾病（必要條件）
+3.2 符合 PCSK9血脂調節劑原因
+3.3 申請前一年內所有 LDL-C 之報告
+3.4 首次使用 PCSK9調節劑治療前之 LDL-C 報告
+   9.32.2.Nilotinib150mg(如 Tasigna150mg)：附件表格
+2.0 mg/dL ）， 且無法以其他
+11.3. 附件三
+"""
+
+
+@pytest.mark.parametrize("num,title", [
+    ("3.1", "靜脈營養輸液"),
+    ("3.2", "維生素"),
+    ("3.3", "其他"),
+    ("7.2.1", "Serotonin antagonists"),
+    ("9.32.2", "Nilotinib 150mg(如 Tasigna 150mg)"),
+    ("2.18", "Captopril"),
+    ("10.7.4", "Adefovir"),
+])
+def test_real_duplicate_patterns_pick_in_order_chapter(num, title):
+    assert parse_chapters(REAL_PATTERN)[num]["title"].startswith(title)
+
+
+def test_real_pattern_actually_has_duplicates():
+    """fixture 自身的前提：五個編號確實被 regex 抓到兩次（否則上面的測試是空轉）。"""
+    import build_data as bd
+    from build_data import duplicate_chapter_numbers
+    seen = []
+    orig = bd.dedupe_chapter_matches
+    bd.dedupe_chapter_matches = lambda m: (seen.append(m), orig(m))[1]
+    try:
+        parse_chapters(REAL_PATTERN)
+    finally:
+        bd.dedupe_chapter_matches = orig
+    assert set(duplicate_chapter_numbers(seen[0])) == {"2.18", "3.1", "3.2", "3.3", "7.2.1", "9.32.2", "10.7.4"}
+
+
+def test_rejected_fragment_is_not_a_split_point():
+    """被排除的片段文字併回所在章節，不截斷該章（PCSK9 申請表留在附件 11.1）。"""
+    ch = parse_chapters(REAL_PATTERN)
+    assert "LDL-C 之報告" in ch["11.1"]["content"]
+    assert "規範給予" in ch["7.2.2"]["content"]
+    # 附件區夾雜唯一的雜訊編號（3.4、2.0 mg/dL），片段的前鄰 3.4 < 9.32.2：只比前鄰會選錯
+    assert "附件表格" in ch["3.4"]["content"]
+    assert "非瓣膜性" in ch["2.1.1"]["content"]
+
+
+def test_dedupe_without_duplicates_is_identity():
+    from build_data import dedupe_chapter_matches
+    m = [(0, "1.1", "a"), (5, "1.2", "b")]
+    assert dedupe_chapter_matches(m) is m
