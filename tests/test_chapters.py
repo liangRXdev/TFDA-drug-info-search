@@ -229,3 +229,35 @@ def test_indented_heading_does_not_span_lines():
     ch = parse_chapters(text)
     assert "2.6.4" not in ch
     assert "限用於下列情形" in ch["2.6.3"]["content"]
+
+
+# ── 重複章節編號（2026-11-09，PR #22 #5）：只回報、不改變後者覆蓋的行為 ──
+DUP_SAMPLE = """2.6.3. 降血脂藥物
+內文一。
+   2.6.4. 之規定辦理
+2.6.4. PCSK9 抑制劑
+真正的規定。
+"""
+
+
+def test_duplicate_numbers_are_reported(capsys):
+    parse_chapters(DUP_SAMPLE)
+    out = capsys.readouterr().out
+    assert "章節編號重複：1 個" in out
+    assert "2.6.4 ×2" in out and "之規定辦理" in out and "PCSK9" in out
+
+
+def test_duplicate_keeps_last_occurrence_behaviour():
+    """行為不變：後出現者覆蓋（是否改為先者保留，待真實 PDF 輸出判斷）。"""
+    assert parse_chapters(DUP_SAMPLE)["2.6.4"]["title"].startswith("PCSK9")
+
+
+def test_no_duplicates_reports_zero(capsys):
+    parse_chapters(SAMPLE)
+    assert "章節編號重複：0" in capsys.readouterr().out
+
+
+def test_duplicate_chapter_numbers_counts():
+    from build_data import duplicate_chapter_numbers
+    m = [(0, "1.1", "a"), (1, "1.2", "b"), (2, "1.1", "c"), (3, "1.1", "d")]
+    assert duplicate_chapter_numbers(m) == {"1.1": 3}

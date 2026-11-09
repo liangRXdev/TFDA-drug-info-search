@@ -2,6 +2,13 @@ name: Build Drug Database
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_record_drop:
+        # build_data.py 會與上一版 data_version.json 比較，總筆數或健保品項降幅 >10% 即中止
+        # （防上游截斷）。確認是真實的大量註銷後才勾選重跑；排程與 push 永遠不放行。
+        description: '放行降幅 >10%（確認為真實註銷後才勾選）'
+        type: boolean
+        default: false
   schedule:
     # 排程落在台灣白天：2026-10-25／11-01 原排程（台灣週一清晨）下載 NHI CSV 皆 RemoteDisconnected，
     # API 37／39／42 同次正常。NHI-drug-price-history 同端點有相同紀錄。避開整點以減少 GitHub 排程延遲。
@@ -71,6 +78,8 @@ jobs:
           fi
 
       - name: Build drug database
+        env:
+          ALLOW_RECORD_DROP: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_record_drop && '1' || '' }}
         run: python build_data.py
 
       - name: Show output file info

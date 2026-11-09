@@ -64,6 +64,12 @@ TIMEOUT_SEC  = 180
 # NHI 有效起迄日「非空但無法解析」的容忍上限；超過即視為來源格式變更並中止
 MAX_BAD_DATE_RATIO = 0.01
 
+# 與上一版 data_version.json 比較的相對降幅上限（2026-11-09，PR #22 #6）。
+# 既有守門只有「空」與「< 1000」這類絕對下限，上游回 200 但資料被截斷（如 API 37
+# 只回一半）時擋不住。確認是真實的大量註銷時，以環境變數 ALLOW_RECORD_DROP=1 放行
+# （workflow_dispatch 的 allow_record_drop 輸入），否則上一版永不更新、守門永遠卡住。
+MAX_RECORD_DROP_RATIO = 0.10
+
 RETRY_BASE_SEC = 5   # 下載重試的退避基數（指數成長：5、10、20…）
 
 # 健保署 API 偶發「未回應即斷線」（RemoteDisconnected；2026-08-30、10-11 兩次
@@ -284,6 +290,8 @@ def parse_chapters(text: str) -> dict:
             continue
         matches.append((m.start(), num, (m.group(2) or m.group(4)).strip()))
 
+    report_duplicate_chapters(matches)
+
     chapters = {}
     for i, (start, num, title) in enumerate(matches):
         end = matches[i+1][0] if i+1 < len(matches) else len(text)
@@ -295,6 +303,64 @@ def parse_chapters(text: str) -> dict:
             'content': content[:3000],
         }
     return chapters
+
+
+def duplicate_chapter_numbers(matches) -> dict:
+    """回傳出現超過一次的章節編號 → 次數。"""
+    counts = {}
+    for _, num, _ in matches:
+        counts[num] = counts.get(num, 0) + 1
+    return {n: c for n, c in counts.items() if c > 1}
+
+
+def report_duplicate_chapters(matches, limit=30):
+    """只印出重複編號，不改變「後出現者覆蓋」的行為（PR #22 #5 待決）。
+
+    後者覆蓋可能是讓正文蓋過 PDF 開頭目錄的機制，也可能讓縮排的交叉引用
+    （「   2.6.4. 之規定」）蓋掉真正的章節。先用真實 PDF 的輸出判斷屬於哪一種，再決定改法。
+    章節總數驗證看不出覆蓋，因為覆蓋不改變 key 的數量。
+    """
+    dups = duplicate_chapter_numbers(matches)
+    if not dups:
+        print("     章節編號重複：0")
+        return
+    titles = {}
+    for _, num, title in matches:
+        if num in dups:
+            titles.setdefault(num, []).append(title[:30])
+    print(f"     ⚠  章節編號重複：{len(dups):,} 個（後出現者覆蓋前者），前 {limit} 個：")
+    for num in sorted(dups, key=lambda n: [int(p) for p in n.split('.')])[:limit]:
+        print(f"        {num} ×{dups[num]}：{' ／ '.join(titles[num])}")
+
+
+def check_record_drop(prev, total, nhi, max_ratio=MAX_RECORD_DROP_RATIO):
+    """與上一版 data_version.json 比較，回傳降幅超標的描述清單（空清單＝通過）。
+
+    prev 缺值、非正整數時該項略過（首次建置或舊格式），不阻擋。
+    """
+    problems = []
+    if not isinstance(prev, dict):
+        return problems
+    for key, label, now in (("totalRecords", "總筆數", total), ("nhiRecords", "健保品項", nhi)):
+        before = prev.get(key)
+        if isinstance(before, bool) or not isinstance(before, int) or before <= 0:
+            continue
+        drop = (before - now) / before
+        if drop > max_ratio:
+            problems.append(f"{label} {before:,} → {now:,}（降 {drop:.1%}，上限 {max_ratio:.0%}）")
+    return problems
+
+
+def load_previous_version(path=VERSION_FILE):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"  ⚠  無法讀取上一版 {path}（{type(e).__name__}），略過降幅守門")
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def lookup_chapter(chapter_str: str, chapters: dict) -> list:
@@ -917,6 +983,15 @@ def main():
               f"code-only {conf_code_only:,}（{conf_code_only/conf_total:.1%}，僅代號匹配未驗證成分）")
     print(f"  健保代號類別不符（號碼相撞、已排除）：{kind_mismatch:,} 筆")
     print(f"  美國仿單參考（品項）：{', '.join(f'{k} {v:,}' for k, v in sorted(us_label_stats.items()))}")
+
+    prev_version = load_previous_version()
+    drops = check_record_drop(prev_version, len(output), matched_nhi)
+    if drops:
+        if os.environ.get("ALLOW_RECORD_DROP") == "1":
+            print(f"  ⚠  降幅超標但已以 ALLOW_RECORD_DROP=1 放行：{'；'.join(drops)}")
+        else:
+            sys.exit(f"⚠  與上一版相比降幅過大：{'；'.join(drops)}。上游資料可能被截斷，"
+                     f"中止以防止覆蓋正常資料；確認為真實註銷後以 ALLOW_RECORD_DROP=1 重跑")
 
     # ── Step 4：輸出 ────────────────────────────────────────────
     # 建置時間戳刻意「不」寫入 drugs_data.json：它每次必然改變，會使

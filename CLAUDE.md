@@ -46,6 +46,8 @@
 - **重複許可證只留首筆**：已實測 3,685 列重複中 **0 列**與首筆有欄位差異，是純重複，無資料損失。不必再驗
 - **支付價 `-` 不是髒資料**：975 筆「異常值」全部只有 `-` 一種，是健保署「無支付價」的既定慣例，已列入 `NO_PRICE_MARKERS`（`build_data.py:434`）
 - 建置時間戳存 **`data_version.json`**，不在 `drugs_data.json` 的 `_meta` 裡
+- **相對降幅守門**（`MAX_RECORD_DROP_RATIO = 0.10`，2026-11-09）：寫檔前與上一版 `data_version.json` 比較 `totalRecords`／`nhiRecords`，任一降 >10% 即中止（防上游 200 但截斷）。真實大量註銷時用 workflow_dispatch 勾選 `allow_record_drop` 重跑（設 `ALLOW_RECORD_DROP=1`）；排程／push 永不放行，有 pytest 擋。上一版缺檔或壞值時略過，不阻擋
+- **章節編號重複只回報**：`parse_chapters` 仍是「後出現者覆蓋」，建置輸出印出重複清單。改成「先者保留」前先看真實 PDF 的清單——後者覆蓋可能正是正文蓋過目錄的機制
 
 改匹配或日期邏輯前**先看 `tests/` 釘住的行為**——那些測試就是規格。
 
