@@ -290,7 +290,9 @@ def parse_chapters(text: str) -> dict:
             continue
         matches.append((m.start(), num, (m.group(2) or m.group(4)).strip()))
 
-    report_duplicate_chapters(matches)
+    deduped = dedupe_chapter_matches(matches)
+    report_duplicate_chapters(matches, deduped)
+    matches = deduped
 
     chapters = {}
     for i, (start, num, title) in enumerate(matches):
@@ -313,22 +315,60 @@ def duplicate_chapter_numbers(matches) -> dict:
     return {n: c for n, c in counts.items() if c > 1}
 
 
-def report_duplicate_chapters(matches, limit=30):
-    """只印出重複編號，不改變「後出現者覆蓋」的行為（PR #22 #5 待決）。
+def _chapter_key(num):
+    return tuple(int(p) for p in num.split('.'))
 
-    後者覆蓋可能是讓正文蓋過 PDF 開頭目錄的機制，也可能讓縮排的交叉引用
-    （「   2.6.4. 之規定」）蓋掉真正的章節。先用真實 PDF 的輸出判斷屬於哪一種，再決定改法。
-    章節總數驗證看不出覆蓋，因為覆蓋不改變 key 的數量。
+
+def dedupe_chapter_matches(matches):
+    """同一編號出現多次時，依文件順序挑出真正的章節，其餘自 matches 移除。
+
+    2026-11-09 以真實 PDF 實測：重複全來自內文片段（PCSK9 申請表的「3.1／3.2／3.3」、
+    引用句「7.2.1. 規範給予…」），沒有目錄。原本「後出現者覆蓋」讓 3.2 維生素（147 品項）
+    與 7.2.1 止吐劑（18 品項）顯示錯誤內容。
+
+    判準：真章節落在順序正確的位置。以「排除所有重複編號後」最近的前後鄰居比較，
+    前鄰 < 本編號、本編號 < 後鄰各得 1 分，取最高分；同分時保留最後一次（原行為）。
+    被移除的片段不再作為切點，其文字併回所在章節（例如 PCSK9 申請表留在 2.6.x 內）。
+    """
+    dups = duplicate_chapter_numbers(matches)
+    if not dups:
+        return matches
+    anchors = [(i, _chapter_key(num)) for i, (_, num, _) in enumerate(matches) if num not in dups]
+
+    def neighbours(i):
+        prev = next((k for j, k in reversed(anchors) if j < i), None)
+        nxt = next((k for j, k in anchors if j > i), None)
+        return prev, nxt
+
+    keep = {}
+    for i, (_, num, _) in enumerate(matches):
+        if num not in dups:
+            continue
+        key = _chapter_key(num)
+        prev, nxt = neighbours(i)
+        score = (prev is None or prev < key) + (nxt is None or key < nxt)
+        if num not in keep or score >= keep[num][0]:
+            keep[num] = (score, i)
+    kept = {i for _, i in keep.values()}
+    return [m for i, m in enumerate(matches) if m[1] not in dups or i in kept]
+
+
+def report_duplicate_chapters(matches, kept, limit=30):
+    """印出重複編號清單（實際挑選見 dedupe_chapter_matches）。
+
+    章節總數驗證看不出覆蓋，因為覆蓋不改變 key 的數量，所以每次建置都列出來。
     """
     dups = duplicate_chapter_numbers(matches)
     if not dups:
         print("     章節編號重複：0")
         return
+    kept_starts = {m[0] for m in kept}
     titles = {}
-    for _, num, title in matches:
+    for start, num, title in matches:
         if num in dups:
-            titles.setdefault(num, []).append(title[:30])
-    print(f"     ⚠  章節編號重複：{len(dups):,} 個（後出現者覆蓋前者），前 {limit} 個：")
+            mark = "✓" if start in kept_starts else "✗"
+            titles.setdefault(num, []).append(f"{mark}{title[:30]}")
+    print(f"     ⚠  章節編號重複：{len(dups):,} 個（依文件順序挑選，標 ✓ 者採用），前 {limit} 個：")
     for num in sorted(dups, key=lambda n: [int(p) for p in n.split('.')])[:limit]:
         print(f"        {num} ×{dups[num]}：{' ／ '.join(titles[num])}")
 
