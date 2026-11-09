@@ -319,15 +319,17 @@ def _chapter_key(num):
     return tuple(int(p) for p in num.split('.'))
 
 
-def dedupe_chapter_matches(matches):
+def dedupe_chapter_matches(matches, window=3):
     """同一編號出現多次時，依文件順序挑出真正的章節，其餘自 matches 移除。
 
     2026-11-09 以真實 PDF 實測：重複全來自內文片段（PCSK9 申請表的「3.1／3.2／3.3」、
     引用句「7.2.1. 規範給予…」），沒有目錄。原本「後出現者覆蓋」讓 3.2 維生素（147 品項）
     與 7.2.1 止吐劑（18 品項）顯示錯誤內容。
 
-    判準：真章節落在順序正確的位置。以「排除所有重複編號後」最近的前後鄰居比較，
-    前鄰 < 本編號、本編號 < 後鄰各得 1 分，取最高分；同分時保留最後一次（原行為）。
+    判準：真章節落在順序正確的位置。以「排除所有重複編號後」前後各 window 個鄰居比較，
+    每個前鄰 < 本編號、每個後鄰 > 本編號各得 1 分，取最高分；同分時保留最後一次（原行為）。
+    缺鄰居（文件頭尾）不給分：poppler 抽字時附件的 9.32.2 是全文最後一個編號，
+    原本「無後鄰視為通過」加上前鄰剛好是雜訊 3.4，與真章節同分而被選中（2026-11-09 CI）。
     被移除的片段不再作為切點，其文字併回所在章節（例如 PCSK9 申請表留在 2.6.x 內）。
     """
     dups = duplicate_chapter_numbers(matches)
@@ -336,8 +338,9 @@ def dedupe_chapter_matches(matches):
     anchors = [(i, _chapter_key(num)) for i, (_, num, _) in enumerate(matches) if num not in dups]
 
     def neighbours(i):
-        prev = next((k for j, k in reversed(anchors) if j < i), None)
-        nxt = next((k for j, k in anchors if j > i), None)
+        pos = next((p for p, (j, _) in enumerate(anchors) if j > i), len(anchors))
+        prev = [k for _, k in anchors[max(0, pos - window):pos]]
+        nxt = [k for _, k in anchors[pos:pos + window]]
         return prev, nxt
 
     keep = {}
@@ -346,7 +349,7 @@ def dedupe_chapter_matches(matches):
             continue
         key = _chapter_key(num)
         prev, nxt = neighbours(i)
-        score = (prev is None or prev < key) + (nxt is None or key < nxt)
+        score = sum(p < key for p in prev) + sum(key < n for n in nxt)
         if num not in keep or score >= keep[num][0]:
             keep[num] = (score, i)
     kept = {i for _, i in keep.values()}

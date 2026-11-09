@@ -350,3 +350,71 @@ def test_dedupe_without_duplicates_is_identity():
     from build_data import dedupe_chapter_matches
     m = [(0, "1.1", "a"), (5, "1.2", "b")]
     assert dedupe_chapter_matches(m) is m
+
+
+# poppler（CI）抽字時，附件的 9.32.2 是全文最後一個編號：無後鄰。
+# 原本「缺鄰居視為通過」＋前鄰雜訊 3.4 < 9.32.2，與真章節同分、同分取後者而選錯（2026-11-09 CI）
+EDGE_PATTERN = """9.30. Dasatinib
+9.31. Sunitinib
+9.32.1. Nilotinib 200mg
+9.32.2. Nilotinib 150mg(如 Tasigna 150mg)
+真正的 Nilotinib 規定。
+9.33. Thalidomide
+9.34. Sorafenib
+9.35. Carmustine
+11.1. 附件
+3.4 首次使用 PCSK9調節劑治療前之 LDL-C 報告
+   9.32.2.Nilotinib150mg(如 Tasigna150mg)：附件表格
+"""
+
+
+def test_missing_neighbour_at_document_end_scores_nothing():
+    ch = parse_chapters(EDGE_PATTERN)
+    assert "真正的 Nilotinib 規定" in ch["9.32.2"]["content"]
+
+
+# 附件片段兩側各有一個「剛好順序正確」的雜訊鄰居：只比最近 1 個鄰居會同分而選錯
+NOISE_PATTERN = """9.30. Dasatinib
+9.31. Sunitinib
+9.32.1. Nilotinib 200mg
+9.32.2. Nilotinib 150mg(如 Tasigna 150mg)
+真正的 Nilotinib 規定。
+9.33. Thalidomide
+9.34. Sorafenib
+9.35. Carmustine
+11.1. 附件
+4.7 雜訊
+3.4 首次使用 PCSK9調節劑治療前之 LDL-C 報告
+   9.32.2.Nilotinib150mg(如 Tasigna150mg)：附件表格
+10.101 6/j.jfma.2018.11.017.
+2.0 mg/dL 且無法以其他
+11.3. 附件三
+"""
+
+
+def test_window_outvotes_single_noisy_neighbour():
+    ch = parse_chapters(NOISE_PATTERN)
+    assert "真正的 Nilotinib 規定" in ch["9.32.2"]["content"]
+
+
+# 片段前方 3 個雜訊鄰居都比它小：只比前鄰會與真章節同分（同分取後者）而選錯，兩側都要比
+LOW_PREV_PATTERN = """9.30. Dasatinib
+9.31. Sunitinib
+9.32.1. Nilotinib 200mg
+9.32.2. Nilotinib 150mg(如 Tasigna 150mg)
+真正的 Nilotinib 規定。
+9.33. Thalidomide
+9.34. Sorafenib
+9.35. Carmustine
+11.1. 附件
+2.5 雜訊
+4.7 雜訊
+3.4 首次使用 PCSK9調節劑治療前之 LDL-C 報告
+   9.32.2.Nilotinib150mg(如 Tasigna150mg)：附件表格
+1.9 雜訊
+"""
+
+
+def test_both_sides_are_compared():
+    ch = parse_chapters(LOW_PREV_PATTERN)
+    assert "真正的 Nilotinib 規定" in ch["9.32.2"]["content"]
