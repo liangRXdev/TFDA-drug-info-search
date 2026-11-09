@@ -66,3 +66,13 @@ def test_timestamp_only_changes_do_not_commit():
 def test_rule_changes_trigger_rebuild(path):
     m = re.search(r"^  push:\n(.*?)(?=^\S|^permissions)", YML, re.S | re.M)
     assert m and f"- '{path}'" in m.group(1)
+
+
+def test_record_drop_override_only_on_manual_dispatch():
+    """降幅守門的放行開關只能來自 workflow_dispatch 勾選；排程與 push 永遠不放行。"""
+    s = step("Build drug database")
+    m = re.search(r"ALLOW_RECORD_DROP:\s*(.+)", s)
+    assert m, "Build drug database 須設定 ALLOW_RECORD_DROP"
+    expr = m.group(1)
+    assert "github.event_name == 'workflow_dispatch'" in expr and "inputs.allow_record_drop" in expr
+    assert re.search(r"allow_record_drop:\s*\n(?:\s+.*\n)*?\s+default:\s*false", YML)
