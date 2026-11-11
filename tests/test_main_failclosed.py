@@ -28,7 +28,7 @@ def run_main(monkeypatch, tmp_path):
         fda = {bd.API_37: raw37, bd.API_39: raw39, bd.API_42: raw42}
         monkeypatch.setattr(bd, "fetch_fda_json", lambda url, label: fda[url])
         monkeypatch.setattr(bd, "fetch_nhi_csv", lambda url, label: raw_nhi)
-        monkeypatch.setattr(bd, "fetch_nhi_chapters", lambda: {})
+        monkeypatch.setattr(bd, "fetch_nhi_chapters", lambda: ({}, None))
         with pytest.raises(SystemExit) as exc:
             bd.main()
         # 中止前不得寫出任何檔案（上一版位元不變）

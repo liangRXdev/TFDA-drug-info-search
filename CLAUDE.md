@@ -28,7 +28,7 @@
 
    **離線開啟頁面靠 `offlineFallback()`**：頁面網址是目錄（`…/TFDA-drug-info-search/`），預快取鍵卻是 `./index.html`，兩者不同；SW 每次改版會清掉舊快取，目錄網址的快取也一起消失。所以開啟頁面的請求找不到快取時，要改回預快取的 `index.html`（`tests/sw.spec.mjs` 釘住）。改 install 清單裡的 `index.html` 路徑時，要同步改這裡。
 
-2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v10`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
+2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v11`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
    **清舊快取只刪自家三個家族前綴**（`OWN_PREFIXES`）：`liangrxdev.github.io` 由所有專案頁共用 origin，Cache Storage 不依 SW scope 隔離，`!ALL_CACHES.includes(k)` 會刪光同網域其他工具的快取（2026-09-12 修正）。不要縮成 `'tfda-'`——TFDA-drug-id-quiz 的快取也以它開頭。
 
 3. **CSP 是 `<meta>` 標籤不是 `_headers`**。`script-src 'self'` 意味著**不能寫 inline `<script>` 或 inline event handler**（`onclick=` 等）——JS 一律進 `app.js`。這裡不需要算 hash（那是 pharmacy-portal 的做法）。
@@ -48,6 +48,7 @@
 - 建置時間戳存 **`data_version.json`**，不在 `drugs_data.json` 的 `_meta` 裡
 - **相對降幅守門**（`MAX_RECORD_DROP_RATIO = 0.10`，2026-11-09）：寫檔前與上一版 `data_version.json` 比較 `totalRecords`／`nhiRecords`，任一降 >10% 即中止（防上游 200 但截斷）。真實大量註銷時用 workflow_dispatch 勾選 `allow_record_drop` 重跑（設 `ALLOW_RECORD_DROP=1`）；排程／push 永不放行，有 pytest 擋。上一版缺檔或壞值時略過，不阻擋
 - **章節編號重複依文件順序挑選**（`dedupe_chapter_matches`，2026-11-09）：真實 PDF 沒有目錄，重複全來自內文片段（PCSK9 申請表、引用句、附件表），「後者覆蓋」選錯 5/7。排除重複編號後取前後各 3 個鄰居，前鄰 < 本號、後鄰 > 本號各 1 分，**缺鄰居不給分**，同分取後者；被排除的片段不當切點。兩個踩過的坑：只比 1 個鄰居且「缺鄰居視為通過」時，**poppler（CI）**抽字的附件 9.32.2 是全文最後一個編號，會與真章節同分而選錯——**本機 Git 附的 pdftotext 是 xpdf 4.00，與 CI 的 poppler 排版不同，重現 CI 須用 poppler**；只比前鄰在真實資料上看不出差異，但測試釘住兩側都要比。建置輸出以 ✓／✗ 標示採用者，PDF 改版後看一眼
+- **給付規定 PDF 是人工更新的**（健保署擋爬蟲 403）。版本日取自每頁頁首「(115.10.22更新)」（`parse_rules_version`，與 `parse_chapters` 剔除頁首共用同一樣式），存 `_meta.nhiRulesVersion`（ISO）——它隨章節內容變，不是建置時間戳，所以不放 `data_version.json`。超過 `NHI_RULES_STALE_DAYS = 45` 天或抽不到版本 → 建置印 `::warning::` 並寫進 job summary，**只警示不中止**；前端在章節全文下方標示版本，過期／版本不明時改成警示樣式。`app.js` 有同名常數，有 pytest 擋。換 PDF：覆蓋 `nhi_payment_rules.pdf`（檔名固定，版本不靠檔名）
 
 改匹配或日期邏輯前**先看 `tests/` 釘住的行為**——那些測試就是規格。
 

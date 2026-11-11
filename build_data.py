@@ -221,9 +221,72 @@ def fetch_nhi_csv(url, label):
 # 本地 PDF 路徑（放在 repo 根目錄，由維護者定期手動更新）
 LOCAL_PDF_PATH = "nhi_payment_rules.pdf"
 
+# PDF 為人工更新，沒有其他機制會發現它過期（2026-11-11）。健保署約每月改版一次
+# （115.5.22 → 6.23 → 7.23 → 8.21 → 9.22 → 10.22），超過此天數即在建置輸出／
+# job summary 警示。只警示不中止：舊版全文仍優於沒有全文，且章節連結不受影響。
+# app.js 的 NHI_RULES_STALE_DAYS 須同值（有 pytest 擋）。
+NHI_RULES_STALE_DAYS = 45
+
+# 每頁頁首「(115.10.22更新)」；parse_chapters 也以同樣樣式把它從章節內文剔除
+RULES_VERSION_RE = re.compile(r'\((\d{2,3})\.(\d{1,2})\.(\d{1,2})更新\)')
+
+
+def parse_rules_version(text):
+    """從 pdftotext 輸出抽出給付規定版本日（民國 → date）；找不到或日期不合法回 None。
+    頁首每頁重複；若出現多種版本（合併檔或改版夾頁）取出現最多者，並列印警示。"""
+    counts = {}
+    for m in RULES_VERSION_RE.finditer(text or ""):
+        counts[m.groups()] = counts.get(m.groups(), 0) + 1
+    if not counts:
+        return None
+    if len(counts) > 1:
+        seen = "、".join(f"{'.'.join(k)}×{v}" for k, v in counts.items())
+        print(f"     ⚠  PDF 頁首出現多種版本日：{seen}（取出現最多者）")
+    y, m, d = max(counts, key=counts.get)
+    try:
+        return date(int(y) + 1911, int(m), int(d))
+    except ValueError:
+        return None
+
+
+def rules_staleness_warning(version, today, max_days=NHI_RULES_STALE_DAYS):
+    """回傳警示文字；版本日在期限內回 None。未取得版本日一律警示——
+    那代表 PDF 缺檔、pdftotext 失敗或頁首格式改了，三者都需要人看。"""
+    if version is None:
+        return (f"無法取得健保給付規定 PDF 版本日（缺檔、解析失敗或頁首格式改變），"
+                f"請確認 {LOCAL_PDF_PATH}")
+    age = (today - version).days
+    if age > max_days:
+        roc = f"{version.year - 1911}.{version.month}.{version.day}"
+        return (f"健保給付規定 PDF 為 {roc} 版，已 {age} 天未更新（上限 {max_days} 天），"
+                f"請至健保署下載新版取代 {LOCAL_PDF_PATH}")
+    return None
+
+
+def report_rules_staleness(version, today):
+    """列印並寫入 GitHub Actions 警示與 job summary；寫 summary 失敗不影響建置。"""
+    warning = rules_staleness_warning(version, today)
+    if version is not None:
+        print(f"  給付規定 PDF 版本：{version.year - 1911}.{version.month}.{version.day}"
+              f"（{(today - version).days} 天前）")
+    if not warning:
+        return None
+    print(f"  ⚠  {warning}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning::{warning}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a", encoding="utf-8") as f:
+                f.write(f"> [!WARNING]\n> {warning}\n\n")
+        except OSError as e:
+            print(f"     ⚠  寫入 job summary 失敗：{e}", file=sys.stderr)
+    return warning
+
+
 def fetch_nhi_chapters():
     """
-    從本地 PDF 解析健保給付規定章節對照。
+    從本地 PDF 解析健保給付規定章節對照，回傳 (chapters, 版本日 date|None)。
     健保署官網會擋爬蟲（403），改由維護者定期手動下載 PDF 放入 repo。
     下載來源：https://www.nhi.gov.tw/ch/cp-13108-67ddf-2508-1.html
     """
@@ -232,7 +295,7 @@ def fetch_nhi_chapters():
     if not os.path.exists(LOCAL_PDF_PATH):
         print(f"     ⚠  找不到本地 PDF（{LOCAL_PDF_PATH}），跳過章節對照")
         print(f"     ℹ  請從健保署下載最新 PDF 並命名為 {LOCAL_PDF_PATH} 放入 repo 根目錄")
-        return {}
+        return {}, None
 
     print(f"     ℹ  讀取本地 PDF：{LOCAL_PDF_PATH}（{os.path.getsize(LOCAL_PDF_PATH)/1e6:.1f} MB）")
 
@@ -248,7 +311,7 @@ def fetch_nhi_chapters():
             )
             if result.returncode != 0:
                 print(f"     ✗  pdftotext 失敗：{result.stderr.decode('utf-8', 'replace')}")
-                return {}
+                return {}, None
 
             with open(txt_path, "r", encoding="utf-8") as f:
                 text = f.read()
@@ -257,13 +320,14 @@ def fetch_nhi_chapters():
 
         chapters = parse_chapters(text)
         print(f"     ✓  解析得 {len(chapters):,} 個章節")
-        return chapters
+        # 沒解析出任何章節時，版本日對使用者沒有意義（前端也不會顯示全文）
+        return chapters, (parse_rules_version(text) if chapters else None)
 
     except (OSError, subprocess.SubprocessError) as e:
         # pdftotext 不存在（本機常見）、逾時、或檔案讀寫失敗皆屬預期範圍，
         # 降級為無章節對照模式而非中止建置
         print(f"     ⚠  PDF 解析失敗：{type(e).__name__}: {e}（將使用無對照模式）")
-        return {}
+        return {}, None
 
 
 def parse_chapters(text: str) -> dict:
@@ -698,10 +762,11 @@ def main():
     raw39   = fetch_fda_json(API_39,  "藥品仿單資料集（API 39）")
     raw42   = fetch_fda_json(API_42,  "藥品外觀圖檔資料集（API 42）")
     raw_nhi = fetch_nhi_csv (API_NHI, "健保用藥品項查詢（NHI CSV）")
-    nhi_chapters = fetch_nhi_chapters()
+    nhi_chapters, rules_version = fetch_nhi_chapters()
 
     print(f"\n  筆數 → 37:{len(raw37):,}  39:{len(raw39):,}  42:{len(raw42):,}  NHI:{len(raw_nhi):,}")
     print(f"  健保章節對照：{len(nhi_chapters):,}")
+    report_rules_staleness(rules_version, date.today())
     if not raw37:
         sys.exit("\n⚠  API 37 無資料")
     # 39／42 抓取失敗時 fetch_fda_json 回 []：原本照常建置，仿單／外觀圖連結整批消失而
@@ -1050,6 +1115,9 @@ def main():
                 "withChapter":    with_chapter,
                 "rawMaterials":   raw_count,
                 "chaptersTotal":  len(nhi_chapters),
+                # 章節全文所依據的 PDF 版本日（ISO；無則 null）。前端據此標示版本與過期警示。
+                # 放 _meta 而非 data_version.json：它隨章節內容一起變，不是建置時間戳
+                "nhiRulesVersion": rules_version.isoformat() if rules_version else None,
                 "matchVerified":  conf_verified,
                 "matchCodeOnly":  conf_code_only,
                 # build_us_label.py 與前端都以此核對 us_label_data.json 的規則版本
