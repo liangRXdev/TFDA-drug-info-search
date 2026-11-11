@@ -35,6 +35,7 @@ Designed around the lookup pain points of clinical staff and the public, the fro
 * ⚡ **Ultra-light (zero dependencies):** No heavy modern framework (React/Vue); plain vanilla JS and native DOM operations. The rendering core is minimal, significantly lowering time to interactive (TTI).
 * 📱 **Responsive card design:** Built mobile-first, turning sprawling package-insert data into structured "drug cards". Indications, ingredients and dosage are clear to read on a phone or a nursing-station desktop.
 * 🔗 **Cross-dataset integration:** The UI automatically links data siloed across agencies — drug licenses, original package insert links (PDF) and NHI reimbursement rules — greatly reducing lookup effort for clinical pharmacists and physicians.
+* 📑 **Reimbursement rule text with version label:** For items with special NHI reimbursement rules, the card expands the full chapter text (extracted from the NHI "complete reimbursement rules" PDF) and labels the version it came from (e.g. "115.10.22"). If the PDF is more than 45 days old or its version is unknown, the label turns into a warning telling the reader to rely on the chapter PDF.
 
 ## Facts: Tech Stack and Modules
 
@@ -49,9 +50,9 @@ Designed around the lookup pain points of clinical staff and the public, the fro
 ## Data Pipeline
 
 Data updates follow this automated flow:
-1. **Trigger:** GitHub Actions runs every Monday at 01:37 UTC (09:37 Taiwan), with a Tuesday 02:37 UTC (10:37 Taiwan) fallback. It can also be started manually via `workflow_dispatch`, and runs on pushes to main that change the ETL scripts.
+1. **Trigger:** GitHub Actions runs every Monday at 01:37 UTC (09:37 Taiwan), with a Tuesday 02:37 UTC (10:37 Taiwan) fallback. It can also be started manually via `workflow_dispatch`, and runs on pushes to main that change the ETL scripts or `nhi_payment_rules.pdf`.
 2. **Setup:** Installs the required Python modules from `requirements.txt`.
-3. **Fetch:** `build_data.py` sends HTTP GET requests to the TFDA server and downloads the large raw JSON datasets.
+3. **Fetch:** `build_data.py` sends HTTP GET requests to the TFDA server and downloads the large raw JSON datasets, plus the NHI drug-item CSV; full reimbursement chapter text is parsed (with `pdftotext`) from the manually updated `nhi_payment_rules.pdf` in the repo.
 4. **Cleanse:** Removes fields the frontend doesn't need to minimize size, and builds an integrated structure keyed on the license number.
 5. **Build:** Writes the slimmed `drugs_data.json`, overwriting the old file.
 6. **US label:** `build_us_label.py` downloads the openFDA bulk export and writes `us_label_data.json`. The step uses `continue-on-error`; on failure, the previous file is restored before committing, so the main data is unaffected.
@@ -97,7 +98,7 @@ Then open `http://localhost:8000` in a browser to preview the UI and test search
 Frontend tests load `index.html` and `app.js` in jsdom (requires Node and `npm ci`):
 
 ```bash
-npm test   # xss.spec.mjs (XSS regression), us_label.spec.mjs (US label section, SW validation), atc.spec.mjs (ATC search)
+npm test   # xss.spec.mjs (XSS regression), us_label.spec.mjs (US label section, SW validation), atc.spec.mjs (ATC search), sw.spec.mjs (offline behavior), rules_version.spec.mjs (rules version label)
 ```
 
 ## Pitfalls and Maintenance Notes
@@ -114,6 +115,7 @@ npm test   # xss.spec.mjs (XSS regression), us_label.spec.mjs (US label section,
   | Autosuggest scan (42K names) | 2 ms |
 
   Peak JS heap is about 138 MB (desktop limit 4192 MB, no concern). **Low-end mobile devices have much lower heap limits, and this hasn't been measured**; if mobile crashes are ever reported, start looking here.
+* **NHI reimbursement rules PDF is updated by hand:** The NHI website blocks crawlers (403), so the maintainer downloads the "complete reimbursement rules" PDF from the [NHI rules page](https://www.nhi.gov.tw/ch/cp-13108-67ddf-2508-1.html) and overwrites `nhi_payment_rules.pdf` (fixed file name; the version date comes from the "(115.10.22更新)" header on every page, not the file name). NHI revises it roughly monthly; when the PDF is more than 45 days old, the build shows an Actions warning and writes it to the job summary (warn only, never abort), and the frontend shows a stale warning. After swapping versions, check the chapter count and the ✓/✗ duplicate-chapter picks in the build output. Chapter **links** come from the NHI CSV and are unaffected by the PDF's age.
 * **API endpoint stability:** `build_data.py` depends on the TFDA open-data platform's URL structure and JSON key names. If the government side changes the schema without notice, the GitHub Actions build will fail; keep an eye on the Action logs.
 * **Ingredient field is English only:** The raw TFDA `ingredients` field holds English ingredient names (salts in parentheses, multiple ingredients separated by `;;`), **with no Chinese**. So the ingredient scope can't search Chinese names such as 「阿莫西林」 (amoxicillin) (measured: 0 results). Supporting that would need a separate Chinese–English ingredient mapping table, which the frontend can't solve alone. Coverage: about 88.7% of all records have ingredients, and nearly all NHI items do (only a handful missing). **Always take total and NHI record counts from `totalRecords` / `nhiRecords` in `data_version.json`**, which is rewritten on every build; absolute counts aren't hard-coded here so they don't go stale with weekly updates.
 * **Data caching strategy (SWR):** `sw.js` uses stale-while-revalidate for the data files (`drugs_data.json`, `us_label_data.json`, listed in `DATA_FILES`). **Each file has its own validator and update lock**, and a failed validation keeps the old cache — the cached copy is returned first so the page is usable immediately, and a background conditional request with `If-None-Match` checks for a new version. Data updates weekly, so when unchanged the response is just a 304 (0 bytes), with no need to refetch 8.3 MB. **If you change this strategy, never fall back to network-first**: that would redownload the whole dataset every time the app opens. When a new version arrives, a green banner prompts the user to reload; it doesn't auto-reload, to avoid interrupting a search in progress.
