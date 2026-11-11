@@ -570,6 +570,9 @@ function buildCard(drug, keyword = '') {
             </details>
         `).join('');
 
+        const versionNote = (drug.chapterDetails && drug.chapterDetails.length)
+            ? rulesVersionNote(drugsMeta.nhiRulesVersion) : '';
+
         const chapterLinks = (drug.nhiChapterLink || '')
             .split(',').map(s => safeUrl(s.trim())).filter(Boolean);
         const chapterLinkBtns = chapterLinks.map((url, i) =>
@@ -587,6 +590,7 @@ function buildCard(drug, keyword = '') {
                 <div class="info-label">💰 健保給付規定${atcBadge}</div>
                 ${chapterLine}
                 ${detailsHtml}
+                ${versionNote}
                 ${buildNhiCodesTable(matches)}
             </div>`;
     } else if (drug.isNhi && matches.length) {
@@ -670,6 +674,36 @@ resultsContainer.addEventListener('click', e => {
     const header = e.target.closest('.drug-header');
     if (header) toggleCard(header);
 });
+
+// ── 給付規定全文的版本標示（2026-11-11）────────────────────────
+// 章節全文來自人工更新的 PDF，可能落後健保署現行版本；藥師須看得出全文是哪一版。
+// 須與 build_data.py 的 NHI_RULES_STALE_DAYS 同值（有 pytest 擋）。
+const NHI_RULES_STALE_DAYS = 45;
+const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+// ISO 日期 → { roc: '115.10.22', age: 天數 }；格式錯或日期不存在回 null
+function rulesVersionInfo(iso, now = new Date()) {
+    const m = ISO_DATE_RE.exec(typeof iso === 'string' ? iso : '');
+    if (!m) return null;
+    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const t = Date.UTC(y, mo - 1, d);
+    const back = new Date(t);
+    if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) return null;
+    // 以使用者當地日曆日相減，避免時區讓天數差一天
+    const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    return { roc: `${y - 1911}.${mo}.${d}`, age: Math.floor((today - t) / 86400000) };
+}
+
+function rulesVersionNote(iso, now = new Date()) {
+    const info = rulesVersionInfo(iso, now);
+    if (!info) {
+        return `<div class="rules-version-note rules-version-stale">⚠ 以上給付規定全文的版本不明，可能不是現行規定；請以章節 PDF 為準。</div>`;
+    }
+    if (info.age > NHI_RULES_STALE_DAYS) {
+        return `<div class="rules-version-note rules-version-stale">⚠ 以上全文擷取自健保署完整給付規定 ${escapeHtml(info.roc)} 版，本站已 ${info.age} 天未更新，可能不是現行規定；請以章節 PDF 為準。</div>`;
+    }
+    return `<div class="rules-version-note">以上全文擷取自健保署完整給付規定 ${escapeHtml(info.roc)} 版；請以章節 PDF 為準。</div>`;
+}
 
 function toggleCard(headerEl) {
     headerEl.closest('.drug-card').classList.toggle('expanded');

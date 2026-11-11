@@ -421,6 +421,13 @@ footer a { color:var(--primary-blue); text-decoration:none; }
     padding:.5rem 0;
 }
 
+/* 給付規定全文的版本標示；過期時改白底粗體，與琥珀色區塊本身區隔 */
+.rules-version-note { font-size:.8rem; color:var(--amber-text); margin:.25rem 0 .5rem; }
+.rules-version-stale {
+    font-weight:700; background:var(--bg-white); border:1px solid var(--amber-border);
+    border-radius:6px; padding:.4rem .6rem;
+}
+
 /* ATC 搜尋：說明列與分組摘要表（沿用既有 token；摘要表為導覽，不是臨床結論，故用中性色） */
 .atc-note {
     font-size:.875rem; color:var(--text-primary); background:var(--gray-bg);

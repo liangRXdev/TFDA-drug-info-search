@@ -78,7 +78,7 @@ def build(monkeypatch, tmp_path):
     fda = {bd.API_37: raw37, bd.API_39: raw39, bd.API_42: raw42}
     monkeypatch.setattr(bd, "fetch_fda_json", lambda url, label: fda[url])
     monkeypatch.setattr(bd, "fetch_nhi_csv", lambda url, label: nhi)
-    monkeypatch.setattr(bd, "fetch_nhi_chapters", lambda: {})
+    monkeypatch.setattr(bd, "fetch_nhi_chapters", lambda: ({}, None))
     return tmp_path
 
 
