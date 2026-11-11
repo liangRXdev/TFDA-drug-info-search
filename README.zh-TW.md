@@ -35,6 +35,7 @@
 * ⚡ **極輕量化 (Zero Dependencies)：** 捨棄沈重的現代化框架 (如 React/Vue)，採用純 Vanilla JS 與原生 DOM 操作實作。核心渲染引擎極小化，顯著降低首次可互動時間 (Time to Interactive, TTI)。
 * 📱 **響應式卡片設計 (Responsive UI)：** 採用 Mobile-first 策略開發，將龐雜的仿單資料轉化為結構化的「藥品資訊卡 (Drug Cards)」。無論於行動裝置或護理站桌機，皆能提供清晰的適應症、成分與用法用量閱讀體驗。
 * 🔗 **跨資料集深度整合：** 介面層自動將「藥品許可證」、「原廠仿單連結 (PDF)」與「健保給付規定」等跨部會孤島資料進行視覺化綁定，大幅降低臨床藥師或醫師的資訊檢索成本。
+* 📑 **給付規定全文與版本標示：** 有特殊給付規定的品項，卡片內直接展開該章節全文（擷取自健保署「完整給付規定」PDF），並在下方標示所依據的版本（如「115.10.22 版」）。PDF 超過 45 天未更新或版本不明時改為警示樣式，提醒以章節 PDF 為準。
 
 ## 客觀數據：系統技術棧與模組
 
@@ -49,9 +50,9 @@
 ## 資料處理流程步驟 (Data Pipeline)
 
 系統資料更新遵循以下自動化流程：
-1. **排程觸發 (Trigger)：** GitHub Actions 每週一 UTC 01:37（台灣週一 09:37）啟動，週二 UTC 02:37（台灣 10:37）備援；`workflow_dispatch` 可手動觸發，push 到 main 且改動 ETL 腳本時也會觸發。
+1. **排程觸發 (Trigger)：** GitHub Actions 每週一 UTC 01:37（台灣週一 09:37）啟動，週二 UTC 02:37（台灣 10:37）備援；`workflow_dispatch` 可手動觸發，push 到 main 且改動 ETL 腳本或 `nhi_payment_rules.pdf` 時也會觸發。
 2. **依賴安裝 (Setup)：** 讀取 `requirements.txt` 安裝必要之 Python 模組。
-3. **資料拉取 (Fetch)：** `build_data.py` 向 TFDA 伺服器發出 HTTP GET 請求，下載原始大型 JSON 資料集。
+3. **資料拉取 (Fetch)：** `build_data.py` 向 TFDA 伺服器發出 HTTP GET 請求，下載原始大型 JSON 資料集，並下載健保署用藥品項 CSV；給付規定章節全文則解析自 repo 內人工更新的 `nhi_payment_rules.pdf`（`pdftotext`）。
 4. **資料清洗 (Cleanse)：** 移除前端展示無需之冗餘欄位，將資料體積極小化，並建立以「許可證字號」為關聯鍵之整合結構。
 5. **靜態生成 (Build)：** 輸出精簡版之 `drugs_data.json` 覆寫原檔案。
 6. **美國仿單參考 (US label)：** `build_us_label.py` 下載 openFDA bulk，計算後輸出 `us_label_data.json`。此步驟設 `continue-on-error`，失敗時 commit 前會還原上一版，不影響主資料發布。
@@ -97,7 +98,7 @@ uv run python -m http.server 8000
 前端測試以 jsdom 載入 `index.html` 與 `app.js`（需 Node 與 `npm ci`）：
 
 ```bash
-npm test   # xss.spec.mjs（XSS 迴歸）、us_label.spec.mjs（仿單區塊、SW 驗證）、atc.spec.mjs（ATC 搜尋）
+npm test   # xss.spec.mjs（XSS 迴歸）、us_label.spec.mjs（仿單區塊、SW 驗證）、atc.spec.mjs（ATC 搜尋）、sw.spec.mjs（離線行為）、rules_version.spec.mjs（給付規定版本標示）
 ```
 
 ## 邏輯漏洞與維護注意事項
@@ -114,6 +115,7 @@ npm test   # xss.spec.mjs（XSS 迴歸）、us_label.spec.mjs（仿單區塊、S
   | autosuggest 掃描（42K 品名） | 2 ms |
 
   JS heap 峰值約 138MB（桌機上限 4192MB，無虞）。**低階行動裝置之 heap 上限遠低於此，尚未實測**，若日後回報行動端崩潰，應優先從此處查起。
+* **健保給付規定 PDF 須人工更新：** 健保署官網會擋爬蟲（403），`nhi_payment_rules.pdf` 由維護者自[健保署給付規定頁](https://www.nhi.gov.tw/ch/cp-13108-67ddf-2508-1.html)下載「完整給付規定」後覆蓋（檔名固定；版本日取自 PDF 每頁頁首「(115.10.22更新)」，不看檔名）。健保署約每月改版；超過 45 天未更新時，建置會在 Actions 顯示警告並寫入 job summary（只警示、不中止），前端同步顯示過期警示。換版後請看一眼建置輸出的章節數與重複章節 ✓／✗ 取捨。章節**連結**來自健保 CSV，不受 PDF 新舊影響。
 * **API 端點穩定性：** `build_data.py` 依賴 TFDA 開放資料平台的 URL 結構與 JSON Key 命名。若政府端無預警更動 Schema，將導致 GitHub Actions 構建失敗，需隨時檢視 Action 執行日誌。
 * **成分欄僅有英文：** TFDA 原始資料之 `ingredients` 欄位為英文成分名（鹽類寫於括號內，多成分以 `;;` 分隔），**不含中文**。故成分範圍無法以「阿莫西林」等中文檢索（實測回傳 0 筆）。若需支援，須另建中英成分對照表，非前端可自行解決。資料覆蓋率：全體約 88.7% 有成分，健保品項則幾乎全數（僅個位數缺漏）。**總筆數與健保品項數請一律以 `data_version.json` 的 `totalRecords` / `nhiRecords` 為準**，該檔於每次建置時重寫；此處不寫死絕對筆數，以免隨每週更新而過期。
 * **資料快取策略 (SWR)：** `sw.js` 對資料檔（`drugs_data.json`、`us_label_data.json`，列於 `DATA_FILES`）採 stale-while-revalidate，**每個檔各有獨立的驗證函式與更新鎖**，驗證失敗就保留舊快取——先回快取使畫面立即可用，再於背景以 `If-None-Match` 條件請求確認新版。資料每週更新一次，故未變動時僅回 304（0 bytes），毋須重抓 8.3MB。**若改動此策略，切勿退回 network-first**：那會使每次開啟 App 都重新下載整包資料。取得新版時以綠色橫幅提示使用者重新整理，不自動重載以免中斷查詢中的操作。
