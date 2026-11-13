@@ -228,16 +228,60 @@ describe('B8 完整相等（反例）', () => {
       assert.equal(m.classified[0].kind, 'K4', c);
     }
   });
-  test('許可證：字別不同、去掉「第」「號」才相同者皆不命中', () => {
-    for (const lic of ['衛署藥輸字第000009號', '衛署藥製字000009', '衛署藥製字第000009', '衛署藥製字第0000９號X']) {
+  test('許可證：字別不同、缺「第」、前導零不同、號碼多一碼、末尾多字皆不命中', () => {
+    for (const lic of ['衛署藥輸字第000009號', '衛署藥製字000009', '衛署藥製字000009號', '衛署藥製字第9號', '衛署藥製字第0000090號', '衛署藥製字第0000９號X', '衛署藥製字第']) {
       const m = F.classify([item({ license: lic })], drugs);
       assert.equal(m.classified[0].kind, 'K4', lic);
     }
+  });
+  test('許可證：末尾缺「號」命中（HIS 匯出常省略；只去末尾一個「號」）', () => {
+    for (const lic of ['衛署藥製字第000010', '衛署藥製字第 000010 ']) {
+      const m = F.classify([item({ license: lic })], drugs);
+      assert.equal(m.classified[0].kind, 'K2', lic);
+      assert.equal(m.classified[0].license, '衛署藥製字第000010號');
+    }
+    assert.equal(F.normalizeLicense('衛署藥製字第000010號'), F.normalizeLicense('衛署藥製字第000010'));
+    assert.notEqual(F.normalizeLicense('衛署藥製字第000010號號'), F.normalizeLicense('衛署藥製字第000010'), '只去一個');
   });
   test('許可證：只差全形半形或夾空白者命中（正例）', () => {
     const m = F.classify([item({ license: '衛署藥製字第 ０００ ０１０號' })], drugs);
     assert.equal(m.classified[0].kind, 'K2');
     assert.equal(m.classified[0].license, '衛署藥製字第000010號');
+  });
+});
+
+describe('許可證欄依內容辨識（表頭沒有「許可證字號」時）', () => {
+  const H = ['CODE', '(沒有資料行名稱)', 'ATC', '英文品名', '中文品名'];
+  test('過半數形如「…字第數字」的欄被當成許可證欄，並回報表頭與比例', () => {
+    const r = F.rowsToFormulary([
+      H,
+      ['1001', '衛署藥輸字第023226', 'D01AE16', 'LOCERYL', '樂指利'],
+      ['1002', '衛部醫器輸字第', '', '', ''],          // 無號碼：不符格式，但不影響過半
+      ['1003', '衛署藥製字第012345號', 'C09CA01', 'COZAAR', '可悅您'],
+    ]);
+    assert.deepEqual(plain(r.items.map(i => [i.code, i.license])), [['1001', '衛署藥輸字第023226'], ['1003', '衛署藥製字第012345號']]);
+    assert.equal(r.hasLicenseColumn, true);
+    assert.equal(r.licenseDetected.header, '(沒有資料行名稱)');
+    assert.ok(Math.abs(r.licenseDetected.ratio - 2 / 3) < 1e-9);
+  });
+  test('未過半不採用（反例）', () => {
+    const r = F.rowsToFormulary([
+      H,
+      ['1', '衛署藥輸字第1', '', 'A', '甲'],
+      ['2', '備註文字', '', 'B', '乙'],
+      ['3', '另一段備註', '', 'C', '丙'],
+      ['4', '衛署藥輸字第2', '', 'D', '丁'],
+    ]);
+    assert.equal(r.licenseDetected, null);
+    assert.equal(r.hasLicenseColumn, false);
+    assert.ok(r.items.every(i => i.license === ''));
+  });
+  test('表頭已有許可證欄時不做內容辨識；已對應的欄（如藥名）不列入候選', () => {
+    const named = F.rowsToFormulary([['藥名', '許可證字號', '備用'], ['甲', 'X', '衛署藥輸字第1']]);
+    assert.equal(named.licenseDetected, null);
+    assert.equal(named.items[0].license, 'X');
+    const nameLooksLikeLicense = F.rowsToFormulary([['藥名'], ['衛署藥輸字第1']]);
+    assert.equal(nameLooksLikeLicense.licenseDetected, null);
   });
 });
 

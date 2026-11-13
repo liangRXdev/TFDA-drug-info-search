@@ -1446,8 +1446,15 @@ async function importFormulary(fileName, size, readBuffer) {
         formularyRecord = record;
         formularyLoadError = '';
         ok = true;
+        const notes = [];
+        if (parsed.licenseDetected) {
+            notes.push(`表頭沒有「許可證字號」，依內容判定「${parsed.licenseDetected.header || '（無名稱）'}」欄為許可證字號（${Math.round(parsed.licenseDetected.ratio * 100)}% 符合格式）。`);
+        }
+        if (!parsed.hasNhiColumn && parsed.hasLicenseColumn) {
+            notes.push('清單沒有健保代號欄：只能以許可證字號對應，健保代號表不會標院內碼。');
+        }
         setFormularyStatus(parsed.hasNhiColumn || parsed.hasLicenseColumn
-            ? '已匯入。'
+            ? ['已匯入。', ...notes].join('')
             : '已匯入，但清單沒有健保代號或許可證字號欄：無法標示院內品項，只能做名稱比對。');
     } catch (err) {
         setFormularyStatus(`匯入失敗：${formularyErrorText(err)}（原清單未變更）`, true);
