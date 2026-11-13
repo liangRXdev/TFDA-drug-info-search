@@ -71,10 +71,15 @@
         return /^[A-Z0-9]{10}$/.test(s) ? s : '';
     }
 
-    // 許可證字號：NFKC、去所有空白；不去「第」「號」或符號
+    // 許可證字號：NFKC、去所有空白、去掉**末尾一個**「號」（HIS 匯出常省略；數字仍完整比對，
+    // 不會讓兩張不同許可證相撞）。不去「第」、不去符號、不去前導零
     function normalizeLicense(value) {
-        return nfkc(value).replace(/\s+/g, '');
+        return nfkc(value).replace(/\s+/g, '').replace(/號$/, '');
     }
+
+    // 沒有許可證表頭時，以內容辨識：某欄過半數非空值形如「…字第＋數字（＋號）」
+    const LICENSE_VALUE_RE = /^[一-鿿]{1,10}字第\d+號?$/;
+    const LICENSE_DETECT_RATIO = 0.5;
 
     // 院內碼去重鍵：NFKC、去空白、轉大寫；空碼不參與去重
     function normalizeInnerCode(value) {
@@ -278,6 +283,8 @@
         if (dataRows.length > MAX_ROWS) {
             throw new FormularyError(`資料列 ${dataRows.length.toLocaleString()} 列，超過上限 ${MAX_ROWS.toLocaleString()} 列`);
         }
+        const licenseDetected = columns.license === undefined ? detectLicenseColumn(rows[headerRow], dataRows, columns) : null;
+        if (licenseDetected) columns.license = licenseDetected.index;
         const cell = (row, field) => (columns[field] === undefined ? '' : cleanCell(row[columns[field]]));
 
         const items = [];
@@ -307,7 +314,31 @@
             excluded,
             hasNhiColumn: columns.nhiCode !== undefined,
             hasLicenseColumn: columns.license !== undefined,
+            // 由內容判斷的許可證欄：{ header, ratio }；表頭本來就認得時為 null
+            licenseDetected: licenseDetected && { header: cleanCell(licenseDetected.header), ratio: licenseDetected.ratio },
         };
+    }
+
+    // 只在表頭沒有許可證欄時呼叫；已對應到其他欄位者不列入候選。取比例最高且過半者
+    function detectLicenseColumn(headerCells, dataRows, columns) {
+        const taken = new Set(Object.values(columns));
+        const width = Math.max(headerCells.length, ...dataRows.map(r => r.length));
+        let best = null;
+        for (let c = 0; c < width; c += 1) {
+            if (taken.has(c)) continue;
+            let filled = 0, hits = 0;
+            for (const row of dataRows) {
+                const v = nfkc(row[c]).replace(/\s+/g, '');
+                if (!v) continue;
+                filled += 1;
+                if (LICENSE_VALUE_RE.test(v)) hits += 1;
+            }
+            const ratio = filled ? hits / filled : 0;
+            if (ratio > LICENSE_DETECT_RATIO && (!best || ratio > best.ratio)) {
+                best = { index: c, ratio, header: headerCells[c] };
+            }
+        }
+        return best;
     }
 
     const isOle = bytes => bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;

@@ -449,6 +449,23 @@ describe('A 匯入與儲存', () => {
     assert.match(c.h.cardOf(LIC(4)).querySelector('.badge-formulary').textContent, /以許可證字號對應/);
   });
 
+  test('HIS 匯出形狀：許可證欄無表頭、末尾缺「號」、無健保代號欄 → 依內容辨識並以許可證對應', async () => {
+    const his = [
+      'CODE,(沒有資料行名稱),ATC,ATC備註,英文品名,成分,類別,中文品名',
+      `H4,衛署藥製字第000004,,,,DELTA,藥品,院內丁`,
+      `H10,衛署藥製字第000010,,,,KAPPA,藥品,院內寅`,
+      `M1,衛署醫器輸字第022704,,醫材,,,醫材,`,
+    ].join('\r\n') + '\r\n';
+    const { h, doc } = await mainPage({ csv: his });
+    const status = doc.getElementById('formularyStatus').textContent;
+    assert.match(status, /依內容判定「\(沒有資料行名稱\)」欄為許可證字號/);
+    assert.match(status, /沒有健保代號欄/);
+    assert.match(doc.getElementById('formularyDetail').textContent, /許可證對應 2/);
+    await h.search('zeta delta');
+    assert.deepEqual(h.badgeCodes(LIC(4)), ['H4']);
+    assert.equal(h.onlyBox().disabled, false);
+  });
+
   test('A7 儲存層只有六個欄位', async () => {
     const { fake } = await mainPage({ csv: '院內代碼,藥名,健保代號,健保價,儲位,ATC碼\r\nX1,甲,AA00000001,12.5,P1-03,C09CA01\r\n' });
     const rec = fake.state.data.get('current');
