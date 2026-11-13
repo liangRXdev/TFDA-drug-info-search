@@ -22,13 +22,15 @@
 ## 三個會咬人的地方
 
 1. **新增靜態檔 → 必須同步加入 `sw.js` 的 install 預快取清單**，否則離線時整站壞掉。
-   CI 有關卡擋（`test.yml:63` 逐一 grep `index.html` / `app.js` / `manifest.json`）——**新增第四個檔案時，記得把它一併加進那個 for 迴圈**，否則關卡形同虛設。
+   CI 有關卡擋（`test.yml` 的 for 迴圈逐一 grep `index.html` / `formulary.js` / `app.js` / `manifest.json`）——**新增靜態檔時，記得把它一併加進那個 for 迴圈**，否則關卡形同虛設。`tests/share.spec.mjs` E6 另以執行 install 的方式驗證。
+
+   **新增測試檔 → 必須加進 `package.json` 的 `test` 指令**（明列檔名，不會自動掃描）；`tests/share.spec.mjs` F1 會擋。
 
    **資料檔例外**：`drugs_data.json`、`us_label_data.json` 不進 install 預快取，走 `sw.js` 的 `DATA_FILES`（stale-while-revalidate、每檔各自的驗證函式與 single-flight 鎖）。新增資料檔要加進 `DATA_FILES`，不是 install 清單。
 
    **離線開啟頁面靠 `offlineFallback()`**：頁面網址是目錄（`…/TFDA-drug-info-search/`），預快取鍵卻是 `./index.html`，兩者不同；SW 每次改版會清掉舊快取，目錄網址的快取也一起消失。所以開啟頁面的請求找不到快取時，要改回預快取的 `index.html`（`tests/sw.spec.mjs` 釘住）。改 install 清單裡的 `index.html` 路徑時，要同步改這裡。
 
-2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v11`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
+2. **改 `index.html` 或 `app.js` → 升 `sw.js` 的 `STATIC_CACHE` 版本**（目前 `tfda-static-v12`）。三個 cache 各自獨立編號（static / data / fonts），只升動到的那個。
    **清舊快取只刪自家三個家族前綴**（`OWN_PREFIXES`）：`liangrxdev.github.io` 由所有專案頁共用 origin，Cache Storage 不依 SW scope 隔離，`!ALL_CACHES.includes(k)` 會刪光同網域其他工具的快取（2026-09-12 修正）。不要縮成 `'tfda-'`——TFDA-drug-id-quiz 的快取也以它開頭。
 
 3. **CSP 是 `<meta>` 標籤不是 `_headers`**。`script-src 'self'` 意味著**不能寫 inline `<script>` 或 inline event handler**（`onclick=` 等）——JS 一律進 `app.js`。這裡不需要算 hash（那是 pharmacy-portal 的做法）。
@@ -81,6 +83,17 @@ npm test                        # node --test：xss.spec.mjs（XSS 迴歸）＋ 
 - 成分建議在「品名」範圍下**仍會出現**，作為切換範圍的捷徑；點選後範圍鈕同步變更——**不靜默改動結果集**
 - 搜尋索引在資料載入後建立一次，不要改成每次查詢重建
 - **ATC 範圍**（`docs/plan-atc-search.md`）：開頭相符；ATC 只來自健保資料，非健保品項永遠搜不到（結果上方固定說明，不可拿掉）；健保只登載到上層的代碼**不列入**、只提示（列入即可能誤配同類別別的藥）；「全部」範圍刻意不併入 ATC。結果用分組摘要表呈現，因卡片上限 30 筆
+
+## 院內清單與分享查詢（`docs/plan-formulary-share.md`）
+
+- **院內徽章只認代碼完全相等**：健保代號（主）、許可證字號（輔）。分類 K1–K4 依每鍵「0／1／多張」依序判定，**任一鍵對到多張或雙鍵指向不同張一律 K3（不給徽章）**。不要改成名稱比對或前綴比對——方向與 `build_data.py` 的寬鬆成分比對相反，是刻意的（院內徽章是「是院內品項」的斷言，HIS 藥名多為簡稱）
+- **只持久保存清單本身**（IndexedDB 單筆紀錄，只六個欄位）；對照、K 分類、摘要每次由「目前 `drugs_data.json`＋清單」推導。不要把對應筆數存起來（站上資料每週更新會不一致）
+- 儲存以**交易 complete** 為成功；寫入成功後才換畫面。同一頁一次只一個清單操作（含啟動讀取），程式層也擋重入
+- **分享入口是 POST `./share` → `sw.js` 303 轉址到 `./#q=`**，頁面只認 `#q=`。不要改回 GET：GET 會把分享文字放進網址，SW 不在時就進 GitHub Pages 紀錄（分享文字可能夾帶病患識別資訊）。`./share` 任何請求 SW 都不發網路請求、不寫快取
+- 頁面讀到 `#q=` **立刻** `replaceState` 清除，不等資料載入；分享文字不寫入任何儲存或 console
+- 分享查詢切到「全部」(`both`) 範圍、**不自動改寫關鍵字**（含劑量 0 筆時只提示）
+- 發布分兩段：先 SW＋頁面，確認正式站 SW 為新版後才發布 manifest 的 `share_target`（避免舊 SW 過渡期外送）。`share_target` 須與 `tests/share-contract.mjs` 相同
+- `formulary.js` 的 CSV／XLSX 解析移植自 oe-extension（MIT），檔頭授權聲明不可刪
 
 ## 樣式
 

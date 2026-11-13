@@ -1,4 +1,4 @@
-const STATIC_CACHE = 'tfda-static-v11';   // index.html／app.js 有異動時須同步提升（見 README）
+const STATIC_CACHE = 'tfda-static-v12';   // index.html／app.js 有異動時須同步提升（見 README）
 const DATA_CACHE   = 'tfda-data-v2';
 const FONT_CACHE   = 'tfda-fonts-v2';
 const ALL_CACHES   = [STATIC_CACHE, DATA_CACHE, FONT_CACHE];
@@ -11,7 +11,7 @@ const OWN_PREFIXES = ['tfda-static-', 'tfda-data-', 'tfda-fonts-'];
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
-      .then(cache => cache.addAll(['./index.html', './app.js', './manifest.json']))
+      .then(cache => cache.addAll(['./index.html', './formulary.js', './app.js', './manifest.json']))
       .then(() => self.skipWaiting())
   );
 });
@@ -188,9 +188,45 @@ async function handleDataRequest(event, name) {
   }
 }
 
+// ── 系統分享入口（docs/plan-formulary-share.md D8–D10）────────────────
+// Android 分享以 POST 送到 ./share（manifest share_target）。分享文字可能夾帶病患識別資訊，
+// 所以這個路徑的任何請求都不發網路請求、不寫快取：讀出 text 後 303 轉址到 ./#q=…，
+// fragment 不會送到伺服器，頁面讀到後立即清除。只截長度，其餘處理交給頁面。
+const SHARE_MAX_CHARS = 500;
+// 精確比對完整路徑：同 origin 其他專案的 /…/share、./shared、./x/share 都不處理
+function isShareRequest(url) {
+  return url.origin === self.location.origin
+    && url.pathname === new URL('./share', self.registration.scope).pathname;
+}
+
+async function handleShare(request) {
+  const home = new URL('./', self.registration.scope).href;
+  if (request.method !== 'POST') return Response.redirect(home, 303);
+  let target = home;
+  try {
+    const form = await request.formData();
+    const text = String(form.get('text') || '');
+    const url = String(form.get('url') || '');
+    if (text.trim()) {
+      // 以 code point 截斷，不切斷代理對（emoji）
+      target = home + '#q=' + encodeURIComponent(Array.from(text).slice(0, SHARE_MAX_CHARS).join(''));
+    } else if (url.trim()) {
+      target = home + '#share=url';
+    }
+  } catch {
+    target = home + '#share=error';
+  }
+  return Response.redirect(target, 303);
+}
+
 // ── Fetch ───────────────────────────────────────────────────────────
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
+
+  if (isShareRequest(url)) {
+    event.respondWith(handleShare(event.request));
+    return;
+  }
 
   // Google Fonts：cache-first（字型不常變動，離線可用）
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {

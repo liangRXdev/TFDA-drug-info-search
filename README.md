@@ -36,6 +36,18 @@ Designed around the lookup pain points of clinical staff and the public, the fro
 * 📱 **Responsive card design:** Built mobile-first, turning sprawling package-insert data into structured "drug cards". Indications, ingredients and dosage are clear to read on a phone or a nursing-station desktop.
 * 🔗 **Cross-dataset integration:** The UI automatically links data siloed across agencies — drug licenses, original package insert links (PDF) and NHI reimbursement rules — greatly reducing lookup effort for clinical pharmacists and physicians.
 * 📑 **Reimbursement rule text with version label:** For items with special NHI reimbursement rules, the card expands the full chapter text (extracted from the NHI "complete reimbursement rules" PDF) and labels the version it came from (e.g. "115.10.22"). If the PDF is more than 45 days old or its version is unknown, the label turns into a warning telling the reader to rely on the chapter PDF.
+* 🏥 **Hospital formulary badge and "in-house only":** Upload your hospital drug list (`.xlsx` first worksheet or `.csv`, UTF-8/Big5). Cards then show "院內品項 (in-house code XXX)", and an "限院內" (in-house only) checkbox narrows results.
+  * A badge needs an **exact match** on the **NHI code** (primary) or **license number** (secondary). A name-only match is labelled "possibly in-house (name match, unverified)" and is not counted as in-house. In-house items with conflicting or unmatched codes are listed below the results.
+  * When "in-house only" yields nothing, the page says this does **not** mean the hospital lacks the drug. Lists imported more than 90 days ago get a warning (warning only; nothing is disabled).
+  * Columns: name (`藥名`/`品名`/`英文品名`, required), in-house code (`院內代碼`/`批價碼`/`藥碼`…), `健保代號`, `許可證字號`, `成分`. Only these six fields are stored; prices and storage locations are not.
+  * The list stays **only in this device's browser** (IndexedDB) and is never uploaded; clearing site data means re-importing.
+
+  Spec: `docs/plan-formulary-share.md`.
+* 📲 **Share text from other apps:**
+  * **Android:** install the site as an app (Chrome "Install app"; the manifest share target ships in the second release step), select a drug name in another app → Share → "藥品查詢". It searches with the "全部" (name + ingredient) scope.
+  * **Deep link:** `…/TFDA-drug-info-search/#q=<drug name>`.
+  * **iOS** (web apps cannot receive shares; use Shortcuts): new shortcut → "Show in Share Sheet", receives Text → "URL Encode" (Shortcut Input) → "Text": `https://liangrxdev.github.io/TFDA-drug-info-search/#q=` followed by the encoded text → "Open URLs". Shortcuts open Safari, so import the formulary in Safari.
+  * Only the first non-blank line is used; text over 60 characters is filled in but not searched; keywords are never rewritten (e.g. dose stripped). Shared text is not sent to the server (the service worker turns it into a `#` fragment, which the page clears immediately).
 
 ## Facts: Tech Stack and Modules
 
