@@ -256,10 +256,10 @@ describe('許可證欄依內容辨識（表頭沒有「許可證字號」時）'
     const r = F.rowsToFormulary([
       H,
       ['1001', '衛署藥輸字第023226', 'D01AE16', 'LOCERYL', '樂指利'],
-      ['1002', '衛部醫器輸字第', '', '', ''],          // 無號碼：不符格式，但不影響過半
+      ['1002', '衛部醫器輸字第', '', '', ''],          // 無號碼：不符格式，但不影響過半；無品名但有許可證欄值 → 保留
       ['1003', '衛署藥製字第012345號', 'C09CA01', 'COZAAR', '可悅您'],
     ]);
-    assert.deepEqual(plain(r.items.map(i => [i.code, i.license])), [['1001', '衛署藥輸字第023226'], ['1003', '衛署藥製字第012345號']]);
+    assert.deepEqual(plain(r.items.map(i => [i.code, i.license])), [['1001', '衛署藥輸字第023226'], ['1002', '衛部醫器輸字第'], ['1003', '衛署藥製字第012345號']]);
     assert.equal(r.hasLicenseColumn, true);
     assert.equal(r.licenseDetected.header, '(沒有資料行名稱)');
     assert.ok(Math.abs(r.licenseDetected.ratio - 2 / 3) < 1e-9);
@@ -299,18 +299,23 @@ describe('B9 摘要逐品項正確', () => {
       ['K2a', '丙', 'ZZ00000000', 'L3'],     // 健保找不到、許可證唯一 → K2
       ['K3a', '丁', 'AA00000001', 'L2'],     // 雙鍵指向不同張 → K3
       ['K4a', '戊', 'AA0000000', ''],         // 無效代碼 → K4
-      ['NN', '', '', ''],                     // 無藥名
+      ['NL2', '', '', 'L3'],                  // 無品名但許可證對上 → 保留，K2
+      ['NL0', '', '', 'LZ'],                  // 無品名、許可證對不上 → 保留但計入 N0
+      ['NN', '', '', ''],                     // 無品名也無許可證 → 略過
       ['k1a', '重複', 'AA00000002', ''],      // 院內碼重複
     ]);
     const m = F.classify(parsed.items, drugs);
     assert.deepEqual(plain(m.classified.map(c => [c.item.code, c.kind, c.license ?? null])), [
       ['K1a', 'K1', 'L1'], ['K1b', 'K1', 'L2'], ['K2a', 'K2', 'L3'], ['K3a', 'K3', null], ['K4a', 'K4', null],
+      ['NL2', 'K2', 'L3'], ['NL0', 'K4', null],
     ]);
-    assert.deepEqual(plain(m.counts), { K1: 2, K2: 1, K3: 1, K4: 1 });
+    assert.deepEqual(plain(m.counts), { K1: 2, K2: 2, K3: 1, K4: 1, N0: 1 });
+    assert.ok(!m.unmatched.some(u => u.item.code === 'NL0'), '無品名且對不上者不進未對應區塊');
+    assert.deepEqual(plain(m.byLicense.get('L3').items.map(e => e.item.code)), ['K2a', 'NL2']);
     assert.deepEqual(plain(parsed.excluded), { noName: 1, dupCode: 1 });
     const sum = Object.values(m.counts).reduce((a, b) => a + b, 0) + parsed.excluded.noName + parsed.excluded.dupCode;
     assert.equal(sum, parsed.rawRows);
-    assert.equal(parsed.rawRows, 7);
+    assert.equal(parsed.rawRows, 9);
   });
 });
 
