@@ -39,12 +39,19 @@ Designed around the lookup pain points of clinical staff and the public, the fro
 * 🏥 **Hospital formulary badge and "in-house only":** Upload your hospital drug list (`.xlsx` first worksheet or `.csv`, UTF-8/Big5). Cards then show "院內品項 (in-house code XXX)", and an "限院內" (in-house only) checkbox narrows results.
   * A badge needs an **exact match** on the **NHI code** (primary) or **license number** (secondary). A name-only match is labelled "possibly in-house (name match, unverified)" and is not counted as in-house. In-house items with conflicting or unmatched codes are listed below the results.
   * When "in-house only" yields nothing, the page says this does **not** mean the hospital lacks the drug. Lists imported more than 90 days ago get a warning (warning only; nothing is disabled).
-  * Columns: name (`藥名`/`品名`/`英文品名`, required), in-house code (`院內代碼`/`批價碼`/`藥碼`…), `健保代號`, `許可證字號`, `成分`. Only these six fields are stored; prices and storage locations are not.
+  * Columns: name (`藥名`/`品名`/`中文品名`/`英文品名`), in-house code (`CODE`/`院內代碼`/`批價碼`/`藥碼`…, case-insensitive), `健保代號`, `許可證字號`, `成分`. Only these six fields are stored; prices and storage locations are not.
+  * License matching ignores full-/half-width, spaces and a **trailing「號」** (often dropped by HIS exports); a missing「第」or different leading zeros still do not match.
+  * If there is no `許可證字號` header (e.g. an HIS export's `(沒有資料行名稱)`), a column whose values are mostly "…字第 + digits" is used as the license column; the import status names the column.
+  * Rows with no name but a license number are kept: if matched, the badge shows the in-house code; if not, they count as "skipped: no name" and stay out of the unmatched list (so thousands of unnamed device rows don't flood it).
+  * Without an NHI code column, matching is by license only and the NHI code table shows no in-house codes; adding `健保代號` to the HIS export is recommended.
   * The list stays **only in this device's browser** (IndexedDB) and is never uploaded; clearing site data means re-importing.
 
   Spec: `docs/plan-formulary-share.md`.
 * 📲 **Share text from other apps:**
-  * **Android:** install the site as an app (Chrome "Install app"), select a drug name in another app → Share → "藥品查詢". It searches with the "全部" (name + ingredient) scope.
+  * **Android:** install the site as an app, then select a drug name in another app → Share → "藥品查詢". It searches with the "全部" (name + ingredient) scope.
+    * Install with **Chrome** ⋮ → "**Install app**" (or the page's "安裝 App" button). "Add to Home screen" creates a shortcut, which does **not** appear in the share sheet. It is an app if long-pressing the icon offers "App info" and "藥品查詢" is listed under Settings → Apps.
+    * If you installed before the share feature shipped (2026-11-13), uninstall and reinstall; installed apps don't pick up the new manifest immediately.
+    * "藥品查詢" is usually not in the top row of the share sheet; scroll to the full app list. If it is still missing, open `chrome://webapks` in Chrome: no "藥品查詢" entry means it was installed as a shortcut.
   * **Deep link:** `…/TFDA-drug-info-search/#q=<drug name>`.
   * **iOS** (web apps cannot receive shares; use Shortcuts): new shortcut → "Show in Share Sheet", receives Text → "URL Encode" (Shortcut Input) → "Text": `https://liangrxdev.github.io/TFDA-drug-info-search/#q=` followed by the encoded text → "Open URLs". Shortcuts open Safari, so import the formulary in Safari.
   * Only the first non-blank line is used; text over 60 characters is filled in but not searched; keywords are never rewritten (e.g. dose stripped). Shared text is not sent to the server (the service worker turns it into a `#` fragment, which the page clears immediately).
