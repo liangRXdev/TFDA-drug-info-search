@@ -538,7 +538,7 @@ describe('A 匯入與儲存', () => {
     const { fake: seedFrom } = await mainPage();
     let release;
     const delayed = makeFakeIdb({ seed: seedFrom.state.data.get('current'), getDelay: new Promise(r => { release = r; }) });
-    const page = await makePage({ drugs: DRUGS, idb: delayed.idb });
+    const page = await makePage({ drugs: DRUGS, idb: delayed.idb, settle: false });
     assert.equal(page.doc.getElementById('formularyFile').disabled, true);
     assert.equal(await importText(page.win, 'new.csv', csv(['N1,新,,,AA00000002,'])), false);
     assert.equal(delayed.state.calls.put, 0);

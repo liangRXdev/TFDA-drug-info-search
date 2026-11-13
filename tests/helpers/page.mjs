@@ -25,7 +25,17 @@ export const tick = (ms = 80) => new Promise(r => setTimeout(r, ms));
  *  data        'ok'（預設）｜'fail'｜'defer'（回傳 release() 手動放行）
  *  beforeInit  app.js 執行後、資料載入前呼叫（裝 spy 用）
  */
-export async function makePage({ drugs = [], idb = null, formulary = true, url = BASE, data = 'ok', beforeInit } = {}) {
+// 等到條件成立（CI 機器較慢時固定 tick 不夠；逾時就拋錯，不默默往下）
+export async function waitFor(cond, label, timeout = 5000) {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeout) throw new Error(`waitFor 逾時：${label}`);
+    await tick(20);
+  }
+}
+
+// settle：預設等啟動讀取（IndexedDB）結束、匯入控制項恢復可用；測「讀取中」的案例傳 false
+export async function makePage({ drugs = [], idb = null, formulary = true, url = BASE, data = 'ok', beforeInit, settle = true } = {}) {
   const errors = [];
   const consoleLines = [];
   const virtualConsole = new VirtualConsole();
@@ -61,6 +71,11 @@ export async function makePage({ drugs = [], idb = null, formulary = true, url =
   win.eval(appSrc);
   if (beforeInit) beforeInit(win);
   if (data !== 'defer') await tick();
+  if (formulary && settle && data === 'ok') {
+    const file = win.document.getElementById('formularyFile');
+    await waitFor(() => !file.disabled, '院內清單啟動讀取');
+    await waitFor(() => win.document.getElementById('dataBadge').textContent.includes('共'), '藥品資料載入');
+  }
   return { win, doc: win.document, errors, consoleLines, release, dom };
 }
 
