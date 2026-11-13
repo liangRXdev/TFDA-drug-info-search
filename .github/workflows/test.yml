@@ -62,7 +62,7 @@ jobs:
       # 該疏漏在離線時才會發作，屆時整站無法運作，一般測試抓不到
       - name: Check service worker precache list
         run: |
-          for f in index.html app.js manifest.json; do
+          for f in index.html formulary.js app.js manifest.json; do
             if ! grep -q "\./$f" sw.js; then
               echo "::error::sw.js 的預快取清單缺少 $f，離線時將缺檔"
               exit 1

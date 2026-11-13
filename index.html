@@ -499,8 +499,69 @@ footer a { color:var(--primary-blue); text-decoration:none; }
 }
 .us-label-link { margin-left:.25rem; }
 
+/* 院內清單：沿用既有 token。徽章用 teal（與健保 green、原料藥 gray 區隔）；
+   名稱比對的候選用虛線框＋文字「未驗證」，不只靠顏色區分 */
+.formulary-only {
+    display:inline-flex; align-items:center; gap:.35rem; margin-left:.5rem;
+    font-size:.875rem; color:var(--text-primary); cursor:pointer;
+}
+.formulary-only input { width:1.05rem; height:1.05rem; accent-color:var(--teal-border); }
+.formulary-only:has(input:disabled) { cursor:not-allowed; color:var(--text-secondary); }
+.formulary-only input:focus-visible { outline:2px solid var(--primary-blue); outline-offset:2px; }
+.formulary-only-hint { font-size:.8rem; color:var(--text-secondary); }
+.formulary-panel {
+    margin-top:.75rem; border:1px solid var(--border-color); border-radius:10px;
+    background:var(--bg-white);
+}
+.formulary-summary {
+    cursor:pointer; padding:.55rem .85rem; font-size:.875rem; color:var(--text-primary);
+    border-radius:10px; overflow-wrap:anywhere;
+}
+.formulary-summary:focus-visible { outline:2px solid var(--primary-blue); outline-offset:2px; }
+.formulary-summary.formulary-stale {
+    background:var(--amber-bg); color:var(--amber-text); font-weight:600;
+    border:1px solid var(--amber-border);
+}
+.formulary-body { padding:.25rem .85rem .85rem; border-top:1px solid var(--border-color); }
+.formulary-detail { font-size:.875rem; margin:.5rem 0; overflow-wrap:anywhere; }
+.formulary-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0; }
+.formulary-upload { position:relative; }
+.formulary-upload:focus-within { outline:2px solid var(--primary-blue); outline-offset:2px; }
+.formulary-file-input { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; }
+.formulary-file-input:disabled { cursor:not-allowed; }
+.link-btn:disabled { opacity:.55; cursor:not-allowed; }
+.formulary-status { font-size:.875rem; min-height:1.2em; overflow-wrap:anywhere; }
+.formulary-status-error { color:#991b1b; font-weight:600; }
+.formulary-help { font-size:.8rem; color:var(--text-secondary); margin-top:.4rem; }
+.badge-formulary {
+    background:var(--teal-bg); color:var(--teal-text); border:1px solid var(--teal-border);
+    white-space:normal;
+}
+.badge-formulary-maybe {
+    background:var(--bg-white); color:var(--text-secondary); border:1px dashed var(--gray-border);
+    white-space:normal;
+}
+.formulary-code { font-family:monospace; font-weight:700; }
+.nhi-codes-table td.formulary-cell { color:var(--teal-text); white-space:nowrap; }
+.formulary-unmatched {
+    background:var(--bg-white); border:1px solid var(--teal-border); border-left:4px solid var(--teal-border);
+    border-radius:12px; padding:.9rem 1.1rem; margin-bottom:1.25rem;
+}
+.formulary-unmatched-head { font-weight:600; font-size:.95rem; color:var(--teal-text); }
+.formulary-unmatched-note { font-size:.85rem; color:var(--text-primary); margin:.35rem 0 .6rem; }
+.formulary-table-wrap { overflow-x:auto; }
+.formulary-table { width:100%; border-collapse:collapse; font-size:.875rem; }
+.formulary-table th {
+    text-align:left; font-size:.8rem; color:var(--text-primary);
+    border-bottom:1px solid var(--border-color); padding:.35rem .5rem;
+}
+.formulary-table td { padding:.35rem .5rem; border-bottom:1px solid var(--border-color); vertical-align:top; overflow-wrap:anywhere; }
+.formulary-sub { font-size:.8rem; color:var(--text-secondary); }
+.formulary-conflict { color:var(--amber-text); font-weight:600; white-space:nowrap; }
+
 @media (max-width:640px) {
     h1 { font-size:1.375rem; }
+    .formulary-only { margin-left:0; }
     /* 卡片＋區塊＋BW 框三層內距在手機上會把原文擠成約 210px 寬 */
     .us-label { padding:.6rem .7rem; }
     .us-label-bw { padding:.5rem .6rem; }
@@ -604,6 +665,9 @@ footer a { color:var(--primary-blue); text-decoration:none; }
             <button class="filter-btn" data-filter="all">全部藥品</button>
             <button class="filter-btn" data-filter="non-nhi">未納健保</button>
             <button class="filter-btn" data-filter="raw">含原料藥</button>
+            <label class="formulary-only" id="onlyFormularyWrap" hidden>
+                <input type="checkbox" id="onlyFormulary" disabled> 🏥 限院內<span class="formulary-only-hint" id="onlyFormularyHint"></span>
+            </label>
         </div>
 
         <div class="dosage-row" id="dosageRow" style="display:none;">
@@ -611,6 +675,25 @@ footer a { color:var(--primary-blue); text-decoration:none; }
             <button class="dosage-btn active" data-dosage="all">全部</button>
         </div>
         <p class="search-hint">💡 預設以品名搜尋、僅顯示健保品項；成分請切換「搜尋範圍」。輸入 2 字以上會出現建議。搜尋結果最多 30 筆。</p>
+        <details class="formulary-panel" id="formularyPanel" hidden>
+            <summary class="formulary-summary" id="formularySummary">🏥 院內清單</summary>
+            <div class="formulary-body">
+                <p class="formulary-detail" id="formularyDetail"></p>
+                <div class="formulary-actions">
+                    <label class="link-btn link-btn-outline formulary-upload">
+                        📂 匯入院內清單（.xlsx／.csv）
+                        <input type="file" id="formularyFile" accept=".xlsx,.csv" class="formulary-file-input">
+                    </label>
+                    <button type="button" class="link-btn link-btn-gray" id="formularyClear" disabled>清除清單</button>
+                </div>
+                <p class="formulary-status" id="formularyStatus" role="status" aria-live="polite"></p>
+                <p class="formulary-help">
+                    需含「藥名」或「英文品名」欄；以「健保代號」（或「許可證字號」）欄完全相同才標示為院內品項。
+                    匯入新檔會取代舊清單；匯入失敗時原清單不變。
+                    清單只存在這台裝置的瀏覽器，不會上傳；清除網站資料後須重新匯入。
+                </p>
+            </div>
+        </details>
         <div class="init-banner" id="initBanner">
             <div class="mini-spinner"></div>
             <span>正在載入藥品資料庫，請稍候…</span>
@@ -638,6 +721,7 @@ footer a { color:var(--primary-blue); text-decoration:none; }
     <p style="margin-top:.4rem;">本系統僅供臨床參考，實際用藥請以仿單與醫師處方為準</p>
 </footer>
 
+<script src="./formulary.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

@@ -36,6 +36,25 @@ let nameIndex       = [];        // [{ name, lower }]，相異品名（中英）
 const showError = msg => { errorMsg.textContent = msg; errorMsg.classList.add('active'); };
 const hideError = ()  => errorMsg.classList.remove('active');
 
+// 院內清單（docs/plan-formulary-share.md）。formulary.js 載入失敗時 F 為 null，
+// 院內功能整個隱藏，既有查詢照常運作（D13）
+const F = window.TFDAFormulary || null;
+const formularyPanel   = document.getElementById('formularyPanel');
+const formularySummary = document.getElementById('formularySummary');
+const formularyDetail  = document.getElementById('formularyDetail');
+const formularyStatus  = document.getElementById('formularyStatus');
+const formularyFile    = document.getElementById('formularyFile');
+const formularyClear   = document.getElementById('formularyClear');
+const onlyFormularyBox = document.getElementById('onlyFormulary');
+const onlyFormularyWrap = document.getElementById('onlyFormularyWrap');
+const onlyFormularyHint = document.getElementById('onlyFormularyHint');
+
+let formularyRecord    = null;   // 儲存層讀回的清單（唯一持久化的東西）
+let formularyMatch     = null;   // 由「站上資料＋清單」推導，不保存（D4）
+let formularyBusy      = false;  // 同一頁一次只進行一個清單操作，含啟動讀取（D12）
+let formularyLoadError = '';
+const formularyStore = F ? F.createStore((() => { try { return window.indexedDB; } catch { return null; } })()) : null;
+
 // ── Init ──────────────────────────────────────────────────────
 async function initDatabase() {
     try {
@@ -64,8 +83,11 @@ async function initDatabase() {
         initBanner.style.display = 'none';
         dataBadge.textContent = `共 ${total} 筆 · 健保 ${nhi} · 更新 ${date}`;
         searchInput.focus();
+        rebuildFormulary();
+        runPendingShare();
 
     } catch (err) {
+        pendingShare = null;   // 資料載入失敗：丟棄待執行的分享查詢，搜尋框文字保留
         console.error('資料庫載入失敗:', err);
         initBanner.innerHTML = '⚠️ 資料庫載入失敗，請確認 <code>drugs_data.json</code> 已上傳。';
         initBanner.style.background = '#fee2e2';
@@ -263,7 +285,8 @@ function applyDosage(arr) {
 }
 
 // ── Search ────────────────────────────────────────────────────
-function searchDrugs() {
+// opts.fromShare：分享／深連結觸發；0 筆且含數字時提示可只留藥名，但不自動重查（不改寫關鍵字）
+function searchDrugs(opts = {}) {
     hideError();
     const keyword = searchInput.value.trim();
     if (!keyword) { showError('請輸入藥品名稱'); return; }
@@ -312,8 +335,21 @@ function searchDrugs() {
         buildDosageBtns(lastResults);  // 動態產生劑型按鈕
         loading.classList.remove('active');
         searchBtn.disabled = false;
-        renderResults();
+        const shown = renderResults();
+        if (opts.fromShare && shown === 0 && /\d/.test(keyword)) {
+            showError('查無結果：分享的文字含數字（如劑量），可只留藥名再搜尋一次');
+        }
     }, 50);
+}
+
+// 「限院內」：卡片須有至少一個 K1／K2 品項（代碼對上）。名稱比對的候選不算
+function onlyFormularyActive() {
+    return !!(F && formularyMatch && onlyFormularyBox && onlyFormularyBox.checked && !onlyFormularyBox.disabled);
+}
+
+function applyFormularyOnly(arr) {
+    if (!onlyFormularyActive()) return arr;
+    return arr.filter(d => formularyMatch.byLicense.has(d.licenseNumber));
 }
 
 // ── Apply filter ──────────────────────────────────────────────
@@ -328,13 +364,19 @@ function applyFilter(arr) {
 }
 
 // ── Render ────────────────────────────────────────────────────
+// 回傳符合筆數（截斷 30 筆之前）
 function renderResults() {
-    if (!lastResults) return;
+    if (!lastResults) return 0;
 
     const isAtc = currentScope === 'atc';
-    const all = applyDosage(applyFilter(lastResults));
-    // 篩選改變後原選的代碼可能已無品項：回到全部，避免誤顯示「查無」
-    if (isAtc && atcGroup && !all.some(d => atcGroupOf(d, atcQuery) === atcGroup)) atcGroup = null;
+    const base = applyDosage(applyFilter(lastResults));
+    // 篩選改變後原選的代碼可能已無品項：回到全部，避免誤顯示「查無」。
+    // 以套用「限院內」之前的集合判斷：限院內造成 0 筆時不可清掉子群，否則取消後無聲擴大結果
+    if (isAtc && atcGroup && !base.some(d => atcGroupOf(d, atcQuery) === atcGroup)) atcGroup = null;
+    const all = applyFormularyOnly(base);
+    const onlyInHouse = onlyFormularyActive();
+    // 未對應院內品項：不受篩選範圍、劑型、限院內影響；ATC 範圍不顯示
+    const unmatchedHtml = isAtc ? '' : buildFormularyUnmatched(lastKeyword);
     // ATC 範圍：摘要表永遠以「目前篩選後的全部結果」計數，點選某列才縮小下方卡片
     const filtered = isAtc && atcGroup ? all.filter(d => atcGroupOf(d, atcQuery) === atcGroup) : all;
 
@@ -349,7 +391,16 @@ function renderResults() {
     const limited = filtered.slice(0, 30);
     const atcPanel = isAtc ? buildAtcPanel(all) : '';
 
-    if (limited.length === 0 && isAtc) {
+    if (limited.length === 0 && onlyInHouse) {
+        resultsContainer.innerHTML = `${atcPanel}
+            <div class="no-results formulary-empty">
+                <div style="font-size:2.5rem;margin-bottom:.75rem">🏥</div>
+                <h3 style="margin-bottom:.5rem">院內清單中未對應到符合品項，不代表院內無此藥</h3>
+                <p style="color:var(--text-secondary);margin-bottom:.75rem">院內清單可能過期，或該品項的健保代號／許可證字號對不上；請看下方「未對應」區塊或取消限院內。</p>
+                <button type="button" class="link-btn link-btn-outline formulary-cancel">取消「限院內」</button>
+            </div>${unmatchedHtml}`;
+        resultsMeta.textContent = '';
+    } else if (limited.length === 0 && isAtc) {
         resultsContainer.innerHTML = `${atcPanel}
             <div class="no-results">
                 <div style="font-size:2.5rem;margin-bottom:.75rem">🏷️</div>
@@ -363,7 +414,7 @@ function renderResults() {
                 <div style="font-size:2.5rem;margin-bottom:.75rem">🔍</div>
                 <h3 style="margin-bottom:.5rem">符合條件的藥品為 0 筆</h3>
                 <p style="color:var(--text-secondary)">試試切換上方篩選條件，或調整關鍵字</p>
-            </div>`;
+            </div>${unmatchedHtml}`;
         resultsMeta.textContent = '';
     } else {
         const filterLabel = {
@@ -377,15 +428,17 @@ function renderResults() {
         const tooMany = filtered.length > 30
             ? (isAtc ? '（顯示前 30 筆，可點上方摘要表縮小到單一成分）' : '（顯示前 30 筆，請使用更精確的關鍵字）')
             : '';
+        const inHouseLabel = onlyInHouse ? ' · <strong>限院內</strong>' : '';
         resultsMeta.innerHTML = `
             搜尋範圍：<strong>${scopeLabel}</strong>${atcLabel} ·
-            篩選範圍：<strong>${filterLabel}</strong>${dosageLabel} ·
+            篩選範圍：<strong>${filterLabel}</strong>${dosageLabel}${inHouseLabel} ·
             符合 ${filtered.length.toLocaleString()} 筆
             ${tooMany}
         `;
-        resultsContainer.innerHTML = atcPanel + limited.map(d => buildCard(d, lastKeyword)).join('');
+        resultsContainer.innerHTML = atcPanel + limited.map(d => buildCard(d, lastKeyword)).join('') + unmatchedHtml;
     }
     resultsSection.classList.add('active');
+    return filtered.length;
 }
 
 // 摘要表的成分欄：去鹽類括號、複方以 + 連接。括號可能巢狀
@@ -450,20 +503,31 @@ function buildAtcPanel(all) {
 }
 
 // ── Card Builder ──────────────────────────────────────────────
-function buildNhiCodesTable(matches, isGreen = false) {
+// inHouseByNhi：Map(健保代號 → [院內品項])，只含 K1；有值時加「院內代碼」欄（K2 不標任何列）
+function buildNhiCodesTable(matches, isGreen = false, inHouseByNhi = null) {
     if (!matches || !matches.length) return '';
     const borderColor = isGreen ? 'var(--green-border)' : 'var(--amber-border)';
     const textColor   = isGreen ? 'var(--green-text)' : 'var(--amber-text)';
     const hasPrice = matches.some(m => m.price);
     const hasAtc   = matches.some(m => m.atcCode);
+    const hasInHouse = !!(inHouseByNhi && inHouseByNhi.size);
+    const inHouseCell = code => {
+        const items = (F && inHouseByNhi && inHouseByNhi.get(F.normalizeNhiCode(code))) || [];
+        if (!items.length) return '<td class="formulary-cell">—</td>';
+        const codes = [...new Set(items.map(i => i.code).filter(Boolean))];
+        return `<td class="formulary-cell"><span class="formulary-row-mark">🏥</span> ${codes.length
+            ? codes.map(c => `<span class="formulary-code">${escapeHtml(c)}</span>`).join('、')
+            : '院內品項（無代碼）'}</td>`;
+    };
     const rows = matches.map(m => {
         const histUrl = priceHistoryUrl(m.code);
         return `
-        <tr>
+        <tr data-nhi-code="${escapeHtml(m.code)}">
             <td style="font-weight:600;font-family:monospace;white-space:nowrap;">
                 ${escapeHtml(m.code)}
                 <button type="button" class="copy-mini" data-code="${escapeHtml(m.code)}" title="複製代號">📋</button>
             </td>
+            ${hasInHouse ? inHouseCell(m.code) : ''}
             <td style="font-size:.8rem;">${escapeHtml(m.enName || m.chName || '')}</td>
             ${hasPrice ? `<td class="price-cell" style="color:${textColor};">${m.price ? escapeHtml(m.price) + ' 元' : '—'}</td>` : ''}
             ${hasAtc   ? `<td>${m.atcCode ? `<span class="atc-badge">${escapeHtml(m.atcCode)}</span>` : '—'}</td>` : ''}
@@ -478,7 +542,7 @@ function buildNhiCodesTable(matches, isGreen = false) {
         <div class="nhi-table-wrap">
         <table class="nhi-codes-table" style="border-color:${borderColor};">
             <thead><tr>
-                <th>健保代號</th><th>品名</th>
+                <th>健保代號</th>${hasInHouse ? '<th>院內代碼</th>' : ''}<th>品名</th>
                 ${hasPrice ? '<th>支付價</th>' : ''}
                 ${hasAtc   ? '<th>ATC</th>' : ''}
                 <th>章節</th>
@@ -498,13 +562,65 @@ function highlight(text, keyword) {
     return escaped.replace(re, m => `<span class="hl">${m}</span>`);
 }
 
+// ── 院內清單：卡片標示、未對應區塊 ───────────────────────────
+// 卡片徽章的院內碼＝該許可證所有 K1／K2 品項的院內碼；K2 的碼註明「以許可證字號對應」。
+// 院內碼為空的品項仍使卡片顯示「院內品項」，只是不帶代碼
+function formularyCardInfo(drug) {
+    const none = { badge: '', inHouseByNhi: null };
+    if (!F || !formularyMatch) return none;
+    const entry = formularyMatch.byLicense.get(drug.licenseNumber);
+    if (!entry) {
+        return F.nameCandidates(formularyMatch, drug).length
+            ? { badge: '<span class="badge badge-formulary-maybe">❔ 可能為院內品項（名稱比對，未驗證）</span>', inHouseByNhi: null }
+            : none;
+    }
+    const kindOf = new Map();       // 院內碼 → 'K1' | 'K2'（同碼有 K1 即算 K1）
+    let k2NoCode = false;
+    entry.items.forEach(({ item, kind }) => {
+        if (!item.code) { if (kind === 'K2') k2NoCode = true; return; }
+        kindOf.set(item.code, kindOf.get(item.code) === 'K1' || kind === 'K1' ? 'K1' : 'K2');
+    });
+    const codes = [...kindOf].map(([c, k]) =>
+        `<span class="formulary-code" data-via="${k === 'K2' ? 'license' : 'nhi'}">${escapeHtml(c)}</span>${k === 'K2' ? '（以許可證字號對應）' : ''}`);
+    let text = codes.length ? ` · 院內代碼 ${codes.join('、')}` : '';
+    if (k2NoCode) text += ' · 以許可證字號對應';
+    return { badge: `<span class="badge badge-formulary">🏥 院內品項${text}</span>`, inHouseByNhi: entry.byNhi };
+}
+
+function buildFormularyUnmatched(keyword) {
+    if (!F || !formularyMatch) return '';
+    const { total, list } = F.unmatchedHits(formularyMatch, keyword);
+    if (!total) return '';
+    const rows = list.map(({ item, kind }) => `
+        <tr data-kind="${kind}">
+            <td class="formulary-code">${escapeHtml(item.code || '—')}</td>
+            <td>${escapeHtml(item.name || item.enName)}${item.name && item.enName ? `<div class="formulary-sub">${escapeHtml(item.enName)}</div>` : ''}</td>
+            <td>${escapeHtml(item.ingredient || '—')}</td>
+            <td>${kind === 'K3' ? '<span class="formulary-conflict">⚠ 代碼衝突</span>' : '找不到對應'}</td>
+        </tr>`).join('');
+    const more = total > list.length ? `，列出前 ${list.length} 筆` : '';
+    return `
+        <section class="formulary-unmatched" aria-label="院內清單有、但未對應到許可證">
+            <div class="formulary-unmatched-head">🏥 院內清單有、但未對應到許可證（${total} 筆${more}）</div>
+            <p class="formulary-unmatched-note">這些院內品項的健保代號或許可證字號在本站找不到、或互相衝突，因此沒有標在上方卡片。此區只依院內藥名、英文名、成分比對關鍵字，<strong>不受篩選範圍、劑型、限院內影響</strong>。</p>
+            <div class="formulary-table-wrap">
+            <table class="formulary-table">
+                <thead><tr><th>院內代碼</th><th>院內藥名</th><th>成分</th><th>狀態</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+            </div>
+        </section>`;
+}
+
 function buildCard(drug, keyword = '') {
     const cardClass = drug.isNhi ? 'is-nhi' : (drug.isRawMaterial ? 'is-raw' : '');
+    const inHouse = formularyCardInfo(drug);
 
     // Badges
     let badges = '';
     if (drug.isNhi) badges += '<span class="badge badge-nhi">💊 健保品項</span>';
     if (drug.isRawMaterial) badges += '<span class="badge badge-raw">⚗ 原料藥</span>';
+    badges += inHouse.badge;
 
     // Ingredients
     const pills = (drug.ingredients || '')
@@ -591,7 +707,7 @@ function buildCard(drug, keyword = '') {
                 ${chapterLine}
                 ${detailsHtml}
                 ${versionNote}
-                ${buildNhiCodesTable(matches)}
+                ${buildNhiCodesTable(matches, false, inHouse.inHouseByNhi)}
             </div>`;
     } else if (drug.isNhi && matches.length) {
         // 健保品項但無特殊規定
@@ -599,7 +715,7 @@ function buildCard(drug, keyword = '') {
             <div class="nhi-section" style="background:var(--green-bg);border-color:var(--green-border);">
                 <div class="info-label" style="color:var(--green-text);">💚 健保品項（無特殊給付限制）${atcBadge}</div>
                 <div class="info-content" style="color:var(--green-text);">本藥品為健保給付品項，依一般慢性病用藥規範給付。</div>
-                ${buildNhiCodesTable(matches, true)}
+                ${buildNhiCodesTable(matches, true, inHouse.inHouseByNhi)}
             </div>`;
     }
 
@@ -652,6 +768,12 @@ function buildCard(drug, keyword = '') {
 // 改為 data attribute + 委派：資料值永遠只當作資料，不進入可執行語境，
 // 同時移除 inline handler 以便啟用 CSP。
 resultsContainer.addEventListener('click', e => {
+    if (e.target.closest('.formulary-cancel')) {
+        // 只取消「限院內」；關鍵字、範圍、篩選、劑型、ATC 子群都不動
+        onlyFormularyBox.checked = false;
+        renderResults();
+        return;
+    }
     const copyBtn = e.target.closest('.copy-mini');
     if (copyBtn) {
         copyNhiCode(copyBtn.dataset.code || '', copyBtn);
@@ -1220,6 +1342,221 @@ searchInput.addEventListener('keydown', e => {
             break;
     }
 });
+
+// ── 院內清單：匯入、清除、摘要（docs/plan-formulary-share.md）──────
+const FORMULARY_KIND_LABELS = [
+    ['K1', '健保代號對應'], ['K2', '許可證對應'], ['K3', '代碼衝突'], ['K4', '未對應'],
+];
+
+function formularyErrorText(err) {
+    // 只顯示自家錯誤訊息；其他例外的內容可能夾帶檔案片段，不顯示也不記錄
+    return F && err instanceof F.FormularyError ? err.message : '無法讀取檔案';
+}
+
+function setFormularyStatus(msg, isError = false) {
+    formularyStatus.textContent = msg;
+    formularyStatus.classList.toggle('formulary-status-error', isError);
+}
+
+function formularyEligible() {
+    return !!(formularyMatch && formularyMatch.counts.K1 + formularyMatch.counts.K2 > 0);
+}
+
+function updateFormularyControls() {
+    if (!F) return;
+    formularyFile.disabled = formularyBusy;
+    formularyClear.disabled = formularyBusy || !formularyRecord;
+    const eligible = formularyEligible();
+    // 失去啟用資格時先取消勾選再停用，否則 disabled 卻 checked 會把結果全部濾掉
+    if (!eligible) onlyFormularyBox.checked = false;
+    onlyFormularyBox.disabled = !eligible;
+    onlyFormularyHint.textContent = eligible ? ''
+        : !formularyRecord ? '（尚未匯入院內清單）'
+        : !formularyMatch ? '（藥品資料載入中）'
+        : '（清單沒有任何可對應的健保代號或許可證字號）';
+}
+
+function renderFormularySummary(now = new Date()) {
+    if (!F) return;
+    formularySummary.classList.remove('formulary-stale');
+    if (!formularyRecord) {
+        formularySummary.textContent = formularyLoadError
+            ? `🏥 院內清單：⚠ ${formularyLoadError}`
+            : '🏥 院內清單：尚未匯入（點此匯入，只存在這台裝置）';
+        formularyDetail.textContent = '';
+        return;
+    }
+    const age = F.importAgeDays(formularyRecord.importedAt, now);
+    let when;
+    if (age === null) {
+        when = '⚠ 匯入日期不明';
+        formularySummary.classList.add('formulary-stale');
+    } else {
+        const d = new Date(Number(formularyRecord.importedAt));
+        when = `匯入於 ${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}（${age} 天前）`;
+        if (age > F.STALE_DAYS) {
+            when = `⚠ ${when}，已超過 ${F.STALE_DAYS} 天，請確認是否需重新匯入`;
+            formularySummary.classList.add('formulary-stale');
+        }
+    }
+    formularySummary.textContent = `🏥 院內清單：${formularyRecord.fileName || '（未命名）'} · ${when}`;
+
+    if (!formularyMatch) {
+        formularyDetail.textContent = '藥品資料載入後顯示對應結果。';
+        return;
+    }
+    const ex = formularyRecord.excluded || { noName: 0, dupCode: 0 };
+    const parts = FORMULARY_KIND_LABELS.map(([k, label]) => `${label} ${formularyMatch.counts[k]}`);
+    parts.push(`略過：無藥名 ${ex.noName}`, `略過：院內碼重複 ${ex.dupCode}`);
+    formularyDetail.textContent = `共 ${Number(formularyRecord.rawRows) || 0} 列 → ${parts.join(' · ')}`;
+}
+
+// 清單或站上資料變更後：整個可見狀態依同一份清單重算一次（關鍵字與其他篩選保留）
+function rebuildFormulary() {
+    if (!F) return;
+    formularyMatch = formularyRecord && drugDatabase.length
+        ? F.classify(formularyRecord.items, drugDatabase) : null;
+    updateFormularyControls();
+    renderFormularySummary();
+    if (lastResults) renderResults();
+}
+
+function setFormularyBusy(busy) {
+    formularyBusy = busy;
+    updateFormularyControls();
+}
+
+// 匯入：解析與寫入全部成功（交易 complete）才更新畫面；任何失敗都不動既有清單與畫面
+async function importFormulary(fileName, size, readBuffer) {
+    if (!F || formularyBusy) return false;
+    setFormularyBusy(true);
+    setFormularyStatus(`讀取 ${fileName}…`);
+    let ok = false;
+    try {
+        if (size > F.MAX_FILE_BYTES) throw new F.FormularyError('檔案超過 5 MB 上限');
+        const parsed = await F.parseFormularyFile(fileName, await readBuffer());
+        const record = {
+            items: parsed.items,
+            fileName: String(fileName || ''),
+            importedAt: Date.now(),
+            rawRows: parsed.rawRows,
+            excluded: parsed.excluded,
+        };
+        await formularyStore.save(record);
+        formularyRecord = record;
+        formularyLoadError = '';
+        ok = true;
+        setFormularyStatus(parsed.hasNhiColumn || parsed.hasLicenseColumn
+            ? '已匯入。'
+            : '已匯入，但清單沒有健保代號或許可證字號欄：無法標示院內品項，只能做名稱比對。');
+    } catch (err) {
+        setFormularyStatus(`匯入失敗：${formularyErrorText(err)}（原清單未變更）`, true);
+    } finally {
+        setFormularyBusy(false);
+    }
+    if (ok) rebuildFormulary();
+    return ok;
+}
+
+async function clearFormulary() {
+    if (!F || formularyBusy || !formularyRecord) return false;
+    setFormularyBusy(true);
+    let ok = false;
+    try {
+        await formularyStore.clear();
+        formularyRecord = null;
+        ok = true;
+        setFormularyStatus('已清除院內清單。');
+    } catch (err) {
+        setFormularyStatus(`清除失敗：${formularyErrorText(err)}`, true);
+    } finally {
+        setFormularyBusy(false);
+    }
+    if (ok) rebuildFormulary();
+    return ok;
+}
+
+function loadFormulary() {
+    if (!F) return Promise.resolve();
+    setFormularyBusy(true);
+    return formularyStore.load()
+        .then(rec => {
+            formularyRecord = F.isValidRecord(rec) ? rec : null;
+            if (rec && !formularyRecord) formularyLoadError = '本機儲存的院內清單格式不符，請重新匯入';
+        })
+        .catch(err => {
+            formularyRecord = null;
+            formularyLoadError = `${formularyErrorText(err)}，院內功能暫不可用`;
+        })
+        .finally(() => {
+            setFormularyBusy(false);
+            rebuildFormulary();
+        });
+}
+
+if (F) {
+    formularyPanel.hidden = false;
+    onlyFormularyWrap.hidden = false;
+    formularyFile.addEventListener('change', () => {
+        const file = formularyFile.files && formularyFile.files[0];
+        if (file) importFormulary(file.name, file.size, () => file.arrayBuffer())
+            .finally(() => { formularyFile.value = ''; });
+    });
+    formularyClear.addEventListener('click', () => { clearFormulary(); });
+    onlyFormularyBox.addEventListener('change', () => { if (lastResults) renderResults(); });
+    renderFormularySummary();
+    loadFormulary();
+}
+
+// ── 分享／深連結（#q=）──────────────────────────────────────────
+// 系統分享 POST 到 ./share，由 sw.js 轉址成 ./#q=…；頁面只認 #q= 一個入口（D9）。
+// fragment 不會送到伺服器；讀到後立刻清除，不等資料載入（D6）。分享文字不寫入任何儲存或 console。
+const SHARE_MAX_CHARS = 60;
+let pendingShare = null;          // 待執行的分享查詢（只有一格）
+
+function firstNonBlankLine(text) {
+    return String(text).split(/\r\n|\r|\n/).map(s => s.trim()).find(Boolean) || '';
+}
+
+function handleShareHash() {
+    const m = /^#(q|share)=([\s\S]*)$/.exec(location.hash);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    pendingShare = null;          // 任何新收到的分享都先取消舊的待執行項
+    if (m[1] === 'share') {
+        showError(m[2] === 'url' ? '分享的是網址：本站僅支援分享文字（如藥名）' : '分享內容讀取失敗，請改用複製貼上');
+        return;
+    }
+    let text;
+    try { text = decodeURIComponent(m[2]); }
+    catch { showError('分享內容無法解讀，請改用複製貼上'); return; }
+    const line = firstNonBlankLine(text);
+    if (!line) return;            // 空白：不搜尋，保留畫面既有內容
+    closeSuggest();
+    searchInput.value = line;
+    if ([...line].length > SHARE_MAX_CHARS) {
+        showError(`分享文字超過 ${SHARE_MAX_CHARS} 字，未自動搜尋；請刪減成藥名後按搜尋`);
+        return;
+    }
+    hideError();
+    setScope('both');             // 分享內容多為學名；同步範圍鈕，不靜默改動結果集
+    if (drugDatabase.length) searchDrugs({ fromShare: true });
+    else pendingShare = line;
+}
+
+function runPendingShare() {
+    const q = pendingShare;
+    pendingShare = null;
+    if (q !== null && searchInput.value === q) {
+        // 資料載入完成時搜尋框會取得焦點並跳出建議清單，蓋住分享查詢的結果
+        closeSuggest();
+        searchDrugs({ fromShare: true });
+    }
+}
+
+searchInput.addEventListener('input', () => { pendingShare = null; });   // 使用者動了搜尋框即取消
+window.addEventListener('hashchange', handleShareHash);
+handleShareHash();
 
 initDatabase();
 
