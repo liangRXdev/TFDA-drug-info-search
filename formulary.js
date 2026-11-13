@@ -293,7 +293,9 @@
         for (const row of dataRows) {
             const name = cell(row, 'name');
             const enName = cell(row, 'enName');
-            if (!name && !enName) { excluded.noName += 1; continue; }
+            // 無品名但有許可證字號：保留（可能以許可證對上而取得徽章，以院內代碼顯示）；
+            // 分類時若對不上，計入「無藥名」且不進未對應區塊（v6）
+            if (!name && !enName && !cell(row, 'license')) { excluded.noName += 1; continue; }
             const code = cell(row, 'code');
             const codeKey = normalizeInnerCode(code);
             if (codeKey) {
@@ -307,7 +309,7 @@
                 license: cell(row, 'license'),
             });
         }
-        if (items.length === 0) throw new FormularyError('檔案裡沒有任何有藥名的資料列');
+        if (items.length === 0) throw new FormularyError('檔案裡沒有任何有藥名（或許可證字號）的資料列');
         return {
             items,
             rawRows: dataRows.length,
@@ -407,7 +409,8 @@
     // 由「目前站上資料＋目前清單」推導全部對照；不保存（站上資料每週更新）
     function classify(items, drugs) {
         const site = buildSiteIndexes(drugs);
-        const counts = { K1: 0, K2: 0, K3: 0, K4: 0 };
+        // N0：無品名且未以代碼對上（K3／K4）的品項，摘要併入「無藥名」，不進未對應區塊與名稱候選
+        const counts = { K1: 0, K2: 0, K3: 0, K4: 0, N0: 0 };
         const byLicense = new Map();     // 許可證字號 → { items: [{item, kind}], byNhi: Map(健保代號 → [item]) }
         const classified = [];
         const unmatched = [];            // K3／K4
@@ -415,9 +418,11 @@
 
         for (const item of items || []) {
             const result = classifyItem(item, site);
-            counts[result.kind] += 1;
             classified.push({ item, ...result });
-            if (result.kind === 'K1' || result.kind === 'K2') {
+            const matched = result.kind === 'K1' || result.kind === 'K2';
+            if (!matched && !item.name && !item.enName) { counts.N0 += 1; continue; }
+            counts[result.kind] += 1;
+            if (matched) {
                 if (!byLicense.has(result.license)) byLicense.set(result.license, { items: [], byNhi: new Map() });
                 const entry = byLicense.get(result.license);
                 entry.items.push({ item, kind: result.kind });

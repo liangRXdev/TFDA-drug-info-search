@@ -1407,7 +1407,7 @@ function renderFormularySummary(now = new Date()) {
     }
     const ex = formularyRecord.excluded || { noName: 0, dupCode: 0 };
     const parts = FORMULARY_KIND_LABELS.map(([k, label]) => `${label} ${formularyMatch.counts[k]}`);
-    parts.push(`略過：無藥名 ${ex.noName}`, `略過：院內碼重複 ${ex.dupCode}`);
+    parts.push(`略過：無藥名 ${ex.noName + (formularyMatch.counts.N0 || 0)}`, `略過：院內碼重複 ${ex.dupCode}`);
     formularyDetail.textContent = `共 ${Number(formularyRecord.rawRows) || 0} 列 → ${parts.join(' · ')}`;
 }
 

@@ -454,15 +454,24 @@ describe('A 匯入與儲存', () => {
       'CODE,(沒有資料行名稱),ATC,ATC備註,英文品名,成分,類別,中文品名',
       `H4,衛署藥製字第000004,,,,DELTA,藥品,院內丁`,
       `H10,衛署藥製字第000010,,,,KAPPA,藥品,院內寅`,
-      `M1,衛署醫器輸字第022704,,醫材,,,醫材,`,
+      `M1,衛署醫器輸字第022704,,醫材,,,醫材,`,      // 無品名、許可證對不上（醫材）→ 計入無藥名
+      `H99,衛署藥製字第000001,,,,,藥品,`,           // 無品名但許可證對上 1 → 保留、以院內代碼顯示
     ].join('\r\n') + '\r\n';
     const { h, doc } = await mainPage({ csv: his });
     const status = doc.getElementById('formularyStatus').textContent;
     assert.match(status, /依內容判定「\(沒有資料行名稱\)」欄為許可證字號/);
     assert.match(status, /沒有健保代號欄/);
-    assert.match(doc.getElementById('formularyDetail').textContent, /許可證對應 2/);
+    const detail = doc.getElementById('formularyDetail').textContent;
+    assert.match(detail, /共 4 列/);
+    assert.match(detail, /許可證對應 3/);
+    assert.match(detail, /未對應 0/);
+    assert.match(detail, /無藥名 1/);
     await h.search('zeta delta');
     assert.deepEqual(h.badgeCodes(LIC(4)), ['H4']);
+    await h.search('zeta alpha');
+    assert.deepEqual(h.badgeCodes(LIC(1)), ['H99'], '無品名品項以院內代碼顯示');
+    await h.search('zeta');
+    assert.equal(doc.querySelector('.formulary-unmatched'), null, '醫材列不得出現在未對應區塊');
     assert.equal(h.onlyBox().disabled, false);
   });
 
