@@ -44,7 +44,7 @@
 
   規格見 `docs/plan-formulary-share.md`。
 * 📲 **從其他 app 分享文字查詢：**
-  * **Android**：將本站安裝為 App（Chrome「安裝 App」）後（manifest 分享目標於第二階段發布啟用），在其他 app 選取藥名 → 分享 → 選「藥品查詢」，即以「全部」範圍搜尋。
+  * **Android**：將本站安裝為 App（Chrome「安裝 App」）後，在其他 app 選取藥名 → 分享 → 選「藥品查詢」，即以「全部」範圍搜尋。
   * **深連結**：`…/TFDA-drug-info-search/#q=藥名`（桌機或其他工具可直接連過來）。
   * **iOS**（不支援網頁 App 接收分享，改用「捷徑」）：捷徑 App 新增捷徑 → 設定「在分享工作表中顯示」、接收「文字」→ 動作「URL 編碼」（輸入：捷徑輸入）→「文字」填 `https://liangrxdev.github.io/TFDA-drug-info-search/#q=` 接上一步結果 →「打開 URL」。捷徑開的是 Safari，院內清單須在 Safari 匯入。
   * 分享文字只取第一個非空白行；超過 60 字只填入搜尋框不自動搜尋；不會自動刪改關鍵字（如去掉劑量）。分享內容不送到伺服器（由 Service Worker 轉成網址 `#` 後段並立即清除）。
