@@ -9,7 +9,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { makePage, helpers, tick, BASE, root } from './helpers/page.mjs';
-import { SHARE_TARGET } from './share-contract.mjs';
+import { SHARE_TARGET as CONTRACT } from './share-contract.mjs';
+
+// E1：分享請求一律依「實際的 manifest.json」建立，manifest 欄名與 SW 脫鉤時測試會失敗
+const MANIFEST = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf-8'));
+const SHARE_TARGET = MANIFEST.share_target;
 
 const drug = (lic, name, ing) => ({
   licenseNumber: lic, chName: name, enName: name, ingredients: ing,
@@ -344,6 +348,18 @@ describe('E 分享入口（sw.js）', () => {
     assert.deepEqual(p.h.licenses(), ['7']);
     assert.equal(p.win.location.hash, '');
   });
+});
+
+// ── E5 manifest ──────────────────────────────────────────────
+test('E5 manifest 的 share_target 等於契約，action 解析後落在 scope 內', () => {
+  assert.deepEqual(SHARE_TARGET, CONTRACT);
+  const manifestUrl = 'https://liangrxdev.github.io/TFDA-drug-info-search/manifest.json';
+  const action = new URL(SHARE_TARGET.action, manifestUrl).href;
+  const scope = new URL(MANIFEST.scope, manifestUrl).href;
+  assert.equal(action, 'https://liangrxdev.github.io/TFDA-drug-info-search/share');
+  assert.equal(scope, 'https://liangrxdev.github.io/TFDA-drug-info-search/');
+  assert.ok(action.startsWith(scope));
+  assert.equal(new URL(MANIFEST.start_url, manifestUrl).href, scope);
 });
 
 // ── F1 每個測試檔都在 npm test 裡 ────────────────────────────────

@@ -44,7 +44,7 @@ Designed around the lookup pain points of clinical staff and the public, the fro
 
   Spec: `docs/plan-formulary-share.md`.
 * 📲 **Share text from other apps:**
-  * **Android:** install the site as an app (Chrome "Install app"; the manifest share target ships in the second release step), select a drug name in another app → Share → "藥品查詢". It searches with the "全部" (name + ingredient) scope.
+  * **Android:** install the site as an app (Chrome "Install app"), select a drug name in another app → Share → "藥品查詢". It searches with the "全部" (name + ingredient) scope.
   * **Deep link:** `…/TFDA-drug-info-search/#q=<drug name>`.
   * **iOS** (web apps cannot receive shares; use Shortcuts): new shortcut → "Show in Share Sheet", receives Text → "URL Encode" (Shortcut Input) → "Text": `https://liangrxdev.github.io/TFDA-drug-info-search/#q=` followed by the encoded text → "Open URLs". Shortcuts open Safari, so import the formulary in Safari.
   * Only the first non-blank line is used; text over 60 characters is filled in but not searched; keywords are never rewritten (e.g. dose stripped). Shared text is not sent to the server (the service worker turns it into a `#` fragment, which the page clears immediately).
