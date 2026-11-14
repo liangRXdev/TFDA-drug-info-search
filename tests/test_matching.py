@@ -401,3 +401,43 @@ def test_report_multi_atc_empty_and_truncated(capsys):
              for i in range(5)]
     assert len(report_multi_atc(items, limit=2)) == 5
     assert "其餘 3 張未列出" in capsys.readouterr().out
+
+
+# ── 罕藥舊制 X 代號：成分未驗證且另有新制代號者排除（2026-11-14）──────
+# X 橫跨四種罕藥類別，類別檢查分不開；ZINC 抽不出成分 token → code-only 放行。
+# 實例：ZINCA 50MG 頂層顯示 PROGLYCEM 的 ATC 與支付價。
+from build_data import drop_unverified_legacy_rare  # noqa: E402
+
+
+def _xm(code, conf):
+    return {"code": code, "confidence": conf}
+
+
+def test_legacy_rare_code_only_dropped_when_license_has_new_code():
+    own = _xm("WC00007100", "code-only")
+    kept, dropped = drop_unverified_legacy_rare(
+        [own, _xm("X000071110", "code-only"), _xm("X000077100", "code-only")])
+    assert (kept, dropped) == ([own], 2)
+
+
+def test_legacy_rare_verified_is_kept():
+    ms = [_xm("YC00037221", "verified"), _xm("X000376255", "verified")]   # NEXVIAZYME
+    assert drop_unverified_legacy_rare(ms) == (ms, 0)
+
+
+def test_legacy_rare_only_matches_are_kept_even_if_code_only():
+    """只有 X 代號時不排除：否則品項失去健保歸屬，查不到比誤配更危險。"""
+    ms = [_xm("X000224138", "code-only"), _xm("x000224100", "code-only")]
+    assert drop_unverified_legacy_rare(ms) == (ms, 0)
+
+
+def test_legacy_rare_rule_leaves_other_leads_alone():
+    ms = [_xm("AC15539229", "code-only"), _xm("AC15539238", "code-only")]
+    assert drop_unverified_legacy_rare(ms) == (ms, 0)
+    assert drop_unverified_legacy_rare([]) == ([], 0)
+
+
+def test_legacy_rare_lowercase_and_missing_code():
+    own = _xm("WC00007100", "code-only")
+    kept, dropped = drop_unverified_legacy_rare([own, _xm("x000071110", "code-only"), {"confidence": "code-only"}])
+    assert dropped == 1 and own in kept and len(kept) == 2

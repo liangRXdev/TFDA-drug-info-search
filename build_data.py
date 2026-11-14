@@ -619,6 +619,25 @@ def nhi_code_kind_compatible(code, lic):
     return kind in allowed
 
 
+def drop_unverified_legacy_rare(matches):
+    """排除罕藥舊制（X 開頭）代號中成分未經比對者；回傳 (保留的匹配, 排除筆數)。
+
+    X 是唯一橫跨四種罕藥類別的首碼，nhi_code_kind_compatible() 分不開；成分又抽不出
+    token 時（ZINC 短於 5 個字母）就只剩號碼相同這一項依據。2026-11-14 資料的 X 匹配
+    共 6 筆：4 筆 code-only 全是錯配（鋅劑 ZINCA／WILIZIN ↔ PROGLYCEM、ORFADIN、TOBI、
+    LEUSTATIN，其中 2 筆被選為頂層主紀錄），2 筆 verified 全對。
+
+    只在該許可證另有非 X 代號時才排除——品項不會因此失去健保歸屬（查不到比誤配更危險）；
+    只有 X 代號的許可證維持原樣。
+    """
+    def is_x(m):
+        return (m.get("code") or "")[:1].upper() == "X"
+    if all(is_x(m) for m in matches):
+        return matches, 0
+    kept = [m for m in matches if not (is_x(m) and m.get("confidence") != "verified")]
+    return kept, len(matches) - len(kept)
+
+
 def is_raw_material(drug):
     licType = (drug.get('許可證種類') or '').strip()
     usage   = (drug.get('用法用量')   or '').strip()
@@ -1017,6 +1036,7 @@ def main():
     raw_count = matched_nhi = with_chapter = with_chapter_link = 0
     conf_verified = conf_code_only = 0   # 成分比對信心度統計（弱匹配規模需可觀測）
     kind_mismatch = 0                    # 號碼相撞但代號首碼與許可證類別不符而排除者
+    legacy_rare_dropped = 0              # 罕藥舊制 X 代號、成分未驗證且另有新制代號而排除者
     us_label_stats = {}                  # 美國仿單參考：品項統計（產鍵／各狀態）
     for drug in raw37:
         lic = (drug.get("許可證字號") or "").strip()
@@ -1070,6 +1090,9 @@ def main():
                         "atcCode": c.get("nhiAtcCode", ""),
                         "price":   c.get("nhiPrice", ""),
                     })
+            nhi_matches, dropped = drop_unverified_legacy_rare(nhi_matches)
+            legacy_rare_dropped += dropped
+            conf_code_only -= dropped
             nhi_matches.sort(key=lambda m: m["code"])
 
         nhi_primary = select_primary_match(nhi_matches)
@@ -1132,6 +1155,7 @@ def main():
         print(f"  成分比對：verified {conf_verified:,}（{conf_verified/conf_total:.1%}）| "
               f"code-only {conf_code_only:,}（{conf_code_only/conf_total:.1%}，僅代號匹配未驗證成分）")
     print(f"  健保代號類別不符（號碼相撞、已排除）：{kind_mismatch:,} 筆")
+    print(f"  罕藥舊制 X 代號未驗證成分（另有新制代號、已排除）：{legacy_rare_dropped:,} 筆")
     report_multi_atc(output)
     print(f"  美國仿單參考（品項）：{', '.join(f'{k} {v:,}' for k, v in sorted(us_label_stats.items()))}")
 
