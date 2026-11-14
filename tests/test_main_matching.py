@@ -40,7 +40,10 @@ def test_cross_kind_code_is_not_matched(monkeypatch, tmp_path, capsys):
     assert [m["code"] for m in item["nhiMatches"]] == ["AC27289100"]
     assert item["nhiPrimaryCode"] == "AC27289100"
     # 被擋下的數量須出現在建置輸出（錯配規模可觀測）
-    assert "類別不符" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "類別不符" in out
+    # 多 ATC 觀測（PR#22 #7）須接進 main() 才看得到
+    assert "同一許可證匹配到多個 ATC：0 張" in out
 
 
 def test_radiopharma_license_gets_its_nhi_code(monkeypatch, tmp_path):
@@ -71,3 +74,32 @@ def test_radiopharma_license_gets_its_nhi_code(monkeypatch, tmp_path):
     items = json.loads((tmp_path / bd.OUTPUT_FILE).read_text(encoding="utf-8"))["data"]
     codes = {i["licenseNumber"]: [m["code"] for m in i["nhiMatches"]] for i in items}
     assert codes == {r_lic: ["BR00091223"], plain_lic: ["BC00091100"]}
+
+
+def test_legacy_rare_collision_is_not_primary(monkeypatch, tmp_path, capsys):
+    """ZINCA 50MG（真實案例）：X 舊制代號撞號、成分抽不出 token，不得進 nhiMatches 或當主紀錄。"""
+    monkeypatch.chdir(tmp_path)
+    lic = "衛署罕藥製字第000007號"
+    filler = [_nhi(f"AC{n:05d}100", "AMLODIPINE", "F") for n in range(1000, 1600)]
+    nhi = filler + [
+        _nhi("WC00007100", "ZINC ACETATE", "ZINCA CAPSULES 50MG"),
+        _nhi("X000071110", "", "PROGLYCEM 50MG/ML 30ML/BOT"),   # 成分空白 → code-only
+    ]
+    raw37 = [{"許可證字號": lic, "中文品名": "", "英文品名": "ZINCA CAPSULES 50MG", "適應症": "",
+              "主成分": "ZINC ACETATE DIHYDRATE", "用法用量": "", "許可證種類": "", "劑型": "膠囊劑"}]
+    raw39 = [{"許可證字號": lic, "仿單圖檔連結": "https://www.fda.gov.tw/a.pdf", "外盒圖檔連結": ""}]
+    raw42 = [{"許可證字號": lic, "外觀圖檔連結": "https://www.fda.gov.tw/a.jpg"}]
+    fda = {bd.API_37: raw37, bd.API_39: raw39, bd.API_42: raw42}
+    monkeypatch.setattr(bd, "fetch_fda_json", lambda url, label: fda[url])
+    monkeypatch.setattr(bd, "fetch_nhi_csv", lambda url, label: nhi)
+    monkeypatch.setattr(bd, "fetch_nhi_chapters", lambda: ({}, None))
+
+    bd.main()
+
+    out = json.loads((tmp_path / bd.OUTPUT_FILE).read_text(encoding="utf-8"))
+    [item] = out["data"]
+    assert [m["code"] for m in item["nhiMatches"]] == ["WC00007100"]
+    assert item["nhiPrimaryCode"] == "WC00007100"
+    # 排除的筆數不計入 code-only 統計（只剩自己的 W 代號那 1 筆），且出現在建置輸出
+    assert out["_meta"]["matchCodeOnly"] == 1
+    assert "已排除）：1 筆" in capsys.readouterr().out

@@ -354,3 +354,90 @@ def test_unknown_kind_fails_open(lic, code):
 ])
 def test_license_kind(lic, kind):
     assert license_kind(lic) == kind
+
+
+# ── 同一許可證匹配到多個 ATC（PR#22 待決 #7，只供觀測）──────────────
+from build_data import distinct_atc, report_multi_atc  # noqa: E402
+
+
+def _am(atc, conf="verified"):
+    return {"code": "X", "atcCode": atc, "confidence": conf}
+
+
+@pytest.mark.parametrize("atcs, expected", [
+    ([], []),
+    (["", None, "  "], []),                          # 缺值不計
+    (["C03AA03", "C03AA03"], ["C03AA03"]),
+    (["D07AC", "D07AC13"], ["D07AC13"]),            # 上層代碼與其下層視為同一個
+    (["d07ac13 ", "D07AC13"], ["D07AC13"]),         # 大小寫與空白不造成假差異
+    (["D07XC03", "D07AC13"], ["D07AC13", "D07XC03"]),
+    (["A16AX05", "V03AH01", "A16AX04"], ["A16AX04", "A16AX05", "V03AH01"]),
+])
+def test_distinct_atc(atcs, expected):
+    assert distinct_atc([_am(a) for a in atcs]) == expected
+
+
+def test_report_multi_atc_lists_only_conflicting_licenses(capsys):
+    items = [
+        {"licenseNumber": "L-single", "enName": "A", "nhiMatches": [_am("C03AA03"), _am("C03AA03")]},
+        {"licenseNumber": "L-prefix", "enName": "B", "nhiMatches": [_am("D07AC"), _am("D07AC13")]},
+        {"licenseNumber": "L-none",   "enName": "C", "nhiMatches": []},
+        {"licenseNumber": "L-verified", "enName": "D", "nhiMatches": [_am("D07AC13"), _am("D07XC03")]},
+        {"licenseNumber": "L-codeonly", "enName": "E",
+         "nhiMatches": [_am("A12BA51", "code-only"), _am("B05XA01", "code-only")]},
+    ]
+    hits = report_multi_atc(items)
+    # code-only 排前面：成分未經比對，較可能是撞號錯配
+    assert hits == [("L-codeonly", ["A12BA51", "B05XA01"]), ("L-verified", ["D07AC13", "D07XC03"])]
+    out = capsys.readouterr().out
+    assert "2 張（含 code-only 1 張）" in out
+    assert "L-single" not in out and "L-prefix" not in out and "L-none" not in out
+
+
+def test_report_multi_atc_empty_and_truncated(capsys):
+    assert report_multi_atc([]) == []
+    assert "0 張" in capsys.readouterr().out
+    items = [{"licenseNumber": f"L{i}", "enName": "", "nhiMatches": [_am("A01AA01"), _am("B01AA01")]}
+             for i in range(5)]
+    assert len(report_multi_atc(items, limit=2)) == 5
+    assert "其餘 3 張未列出" in capsys.readouterr().out
+
+
+# ── 罕藥舊制 X 代號：成分未驗證且另有新制代號者排除（2026-11-14）──────
+# X 橫跨四種罕藥類別，類別檢查分不開；ZINC 抽不出成分 token → code-only 放行。
+# 實例：ZINCA 50MG 頂層顯示 PROGLYCEM 的 ATC 與支付價。
+from build_data import drop_unverified_legacy_rare  # noqa: E402
+
+
+def _xm(code, conf):
+    return {"code": code, "confidence": conf}
+
+
+def test_legacy_rare_code_only_dropped_when_license_has_new_code():
+    own = _xm("WC00007100", "code-only")
+    kept, dropped = drop_unverified_legacy_rare(
+        [own, _xm("X000071110", "code-only"), _xm("X000077100", "code-only")])
+    assert (kept, dropped) == ([own], 2)
+
+
+def test_legacy_rare_verified_is_kept():
+    ms = [_xm("YC00037221", "verified"), _xm("X000376255", "verified")]   # NEXVIAZYME
+    assert drop_unverified_legacy_rare(ms) == (ms, 0)
+
+
+def test_legacy_rare_only_matches_are_kept_even_if_code_only():
+    """只有 X 代號時不排除：否則品項失去健保歸屬，查不到比誤配更危險。"""
+    ms = [_xm("X000224138", "code-only"), _xm("x000224100", "code-only")]
+    assert drop_unverified_legacy_rare(ms) == (ms, 0)
+
+
+def test_legacy_rare_rule_leaves_other_leads_alone():
+    ms = [_xm("AC15539229", "code-only"), _xm("AC15539238", "code-only")]
+    assert drop_unverified_legacy_rare(ms) == (ms, 0)
+    assert drop_unverified_legacy_rare([]) == ([], 0)
+
+
+def test_legacy_rare_lowercase_and_missing_code():
+    own = _xm("WC00007100", "code-only")
+    kept, dropped = drop_unverified_legacy_rare([own, _xm("x000071110", "code-only"), {"confidence": "code-only"}])
+    assert dropped == 1 and own in kept and len(kept) == 2
