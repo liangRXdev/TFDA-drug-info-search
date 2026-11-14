@@ -40,7 +40,10 @@ def test_cross_kind_code_is_not_matched(monkeypatch, tmp_path, capsys):
     assert [m["code"] for m in item["nhiMatches"]] == ["AC27289100"]
     assert item["nhiPrimaryCode"] == "AC27289100"
     # 被擋下的數量須出現在建置輸出（錯配規模可觀測）
-    assert "類別不符" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "類別不符" in out
+    # 多 ATC 觀測（PR#22 #7）須接進 main() 才看得到
+    assert "同一許可證匹配到多個 ATC：0 張" in out
 
 
 def test_radiopharma_license_gets_its_nhi_code(monkeypatch, tmp_path):

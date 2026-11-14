@@ -354,3 +354,50 @@ def test_unknown_kind_fails_open(lic, code):
 ])
 def test_license_kind(lic, kind):
     assert license_kind(lic) == kind
+
+
+# ── 同一許可證匹配到多個 ATC（PR#22 待決 #7，只供觀測）──────────────
+from build_data import distinct_atc, report_multi_atc  # noqa: E402
+
+
+def _am(atc, conf="verified"):
+    return {"code": "X", "atcCode": atc, "confidence": conf}
+
+
+@pytest.mark.parametrize("atcs, expected", [
+    ([], []),
+    (["", None, "  "], []),                          # 缺值不計
+    (["C03AA03", "C03AA03"], ["C03AA03"]),
+    (["D07AC", "D07AC13"], ["D07AC13"]),            # 上層代碼與其下層視為同一個
+    (["d07ac13 ", "D07AC13"], ["D07AC13"]),         # 大小寫與空白不造成假差異
+    (["D07XC03", "D07AC13"], ["D07AC13", "D07XC03"]),
+    (["A16AX05", "V03AH01", "A16AX04"], ["A16AX04", "A16AX05", "V03AH01"]),
+])
+def test_distinct_atc(atcs, expected):
+    assert distinct_atc([_am(a) for a in atcs]) == expected
+
+
+def test_report_multi_atc_lists_only_conflicting_licenses(capsys):
+    items = [
+        {"licenseNumber": "L-single", "enName": "A", "nhiMatches": [_am("C03AA03"), _am("C03AA03")]},
+        {"licenseNumber": "L-prefix", "enName": "B", "nhiMatches": [_am("D07AC"), _am("D07AC13")]},
+        {"licenseNumber": "L-none",   "enName": "C", "nhiMatches": []},
+        {"licenseNumber": "L-verified", "enName": "D", "nhiMatches": [_am("D07AC13"), _am("D07XC03")]},
+        {"licenseNumber": "L-codeonly", "enName": "E",
+         "nhiMatches": [_am("A12BA51", "code-only"), _am("B05XA01", "code-only")]},
+    ]
+    hits = report_multi_atc(items)
+    # code-only 排前面：成分未經比對，較可能是撞號錯配
+    assert hits == [("L-codeonly", ["A12BA51", "B05XA01"]), ("L-verified", ["D07AC13", "D07XC03"])]
+    out = capsys.readouterr().out
+    assert "2 張（含 code-only 1 張）" in out
+    assert "L-single" not in out and "L-prefix" not in out and "L-none" not in out
+
+
+def test_report_multi_atc_empty_and_truncated(capsys):
+    assert report_multi_atc([]) == []
+    assert "0 張" in capsys.readouterr().out
+    items = [{"licenseNumber": f"L{i}", "enName": "", "nhiMatches": [_am("A01AA01"), _am("B01AA01")]}
+             for i in range(5)]
+    assert len(report_multi_atc(items, limit=2)) == 5
+    assert "其餘 3 張未列出" in capsys.readouterr().out
