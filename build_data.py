@@ -495,11 +495,16 @@ def lookup_chapter(chapter_str: str, chapters: dict) -> list:
 
 # ── 許可證匹配核心 ──────────────────────────────────────────────
 def fda_lic_to_keys(license_str):
-    m = re.search(r'第(\d+)號', license_str)
+    """許可證字號 → 索引鍵（補零版＋去零版）。
+
+    放射性藥品的號碼帶 R（如 衛部藥輸字第R00091號），是另一個自 1 起編的序列；
+    鍵保留 R 前綴，才不會與同類別的一般號碼（藥輸 000091）撞號。
+    """
+    m = re.search(r'第(R?)(\d+)號', license_str)
     if not m:
         return set()
-    n = m.group(1)
-    return {n, n.lstrip('0')} - {''}
+    r, n = m.groups()
+    return {r + k for k in (n, n.lstrip('0')) if k}
 
 
 def nhi_code_to_keys(code):
@@ -509,6 +514,9 @@ def nhi_code_to_keys(code):
     - 第 2 碼為字母（新制，如 AC04004710、KC010892B5）→ 取 5 碼
     - 首碼為 X（罕藥舊制，如 X000224138）→ 取 5 碼
     - 其餘「1 字母＋數字」舊制（如 A001046100）→ 取 6 碼
+    - 第 2 碼為 R（放射性藥品，如 BR00091223 ↔ 衛部藥輸字第R00091號 Xofigo）→
+      鍵保留 R 前綴，只配 R 序列的許可證。推論自 2026-11 資料的唯一一例；
+      修正前 58 張 R 序列許可證一律抽不出鍵，Xofigo 被顯示為非健保品項。
 
     原實作對每個代號同時產 5／6／7 碼前綴，跨許可證撞號（2026-10-22 review 實測
     約 43 筆錯配）：A001046100 的 5 碼前綴 00104 → 104，被配給罕藥輸 000104
@@ -528,7 +536,8 @@ def nhi_code_to_keys(code):
     if len(digits) < n or len(code.strip()) < 1 + len(second) + n + 2:
         return set()
     sub = digits[:n]
-    return {sub, sub.lstrip('0')} - {''}
+    r = 'R' if second.upper() == 'R' else ''
+    return {r + k for k in (sub, sub.lstrip('0')) if k}
 
 
 #: 健保代號首碼 → 可對應的許可證類別（license_kind() 的輸出）。
