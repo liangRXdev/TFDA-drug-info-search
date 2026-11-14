@@ -111,6 +111,35 @@ def test_format_based_keys_keep_true_matches(lic, code):
     assert fda_lic_to_keys(lic) & nhi_code_to_keys(code)
 
 
+# ── 放射性藥品 R 序列（PR#22 待決 #9）────────────────────────────
+# 許可證號碼帶 R（衛部藥輸字第R00091號），原 regex 抽不出數字 → 58 張永遠不會匹配，
+# 有健保給付的 Xofigo（BR00091223）被顯示為非健保品項。
+XOFIGO_LIC, XOFIGO_CODE = "衛部藥輸字第R00091號", "BR00091223"
+
+
+def test_radiopharma_license_keys_keep_r_prefix():
+    assert fda_lic_to_keys(XOFIGO_LIC) == {"R00091", "R91"}
+    assert nhi_code_to_keys(XOFIGO_CODE) == {"R00091", "R91"}
+
+
+def test_radiopharma_license_matches_its_nhi_code():
+    assert fda_lic_to_keys(XOFIGO_LIC) & nhi_code_to_keys(XOFIGO_CODE)
+    assert nhi_code_kind_compatible(XOFIGO_CODE, XOFIGO_LIC)
+
+
+@pytest.mark.parametrize("lic, code", [
+    ("衛部藥輸字第000091號", XOFIGO_CODE),    # 同類別的一般號碼 91：類別檢查擋不下，須靠鍵分開
+    ("衛部藥輸字第R00091號", "BC00091100"),   # R 序列許可證不配一般序列的代號
+    ("衛部藥製字第R00091號", "B000091100"),   # 舊制 6 碼亦同
+])
+def test_radiopharma_series_does_not_collide_with_plain_numbers(lic, code):
+    assert not (fda_lic_to_keys(lic) & nhi_code_to_keys(code))
+
+
+def test_radiopharma_license_all_zero_number_keeps_padded_key():
+    assert fda_lic_to_keys("衛部藥輸字第R00000號") == {"R00000"}
+
+
 # ── ingredient_core ────────────────────────────────────────────
 def test_ingredient_core_extracts_long_tokens():
     assert "AMLODIPINE" in ingredient_core("AMLODIPINE BESYLATE")
